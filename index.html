@@ -429,6 +429,8 @@
         height: 250px;
         margin-bottom: 20px;
     }
+    /* ===== RESPONSIVE EXPENSES ===== */ .expense-card { display: flex; align-items: center; gap: 12px; padding: 14px 16px; background: rgba(30,41,59,0.5); border: 1px solid rgba(51,65,85,0.2); border-radius: 12px; margin-bottom: 10px; transition: all 0.2s; } .expense-card:hover { background: rgba(30,41,59,0.7); border-color: rgba(59,130,246,0.2); } .expense-icon { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; } .expense-main { flex: 1; min-width: 0; } .expense-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; } .expense-name { color: #e2e8f0; font-weight: 600; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .expense-pct { font-weight: 700; font-size: 0.85rem; white-space: nowrap; } .expense-meta { color: #64748b; font-size: 0.75rem; margin-bottom: 8px; } .expense-bar-track { width: 100%; height: 8px; background: rgba(51,65,85,0.4); border-radius: 4px; overflow: hidden; display: flex; } .expense-bar-anthony { height: 100%; background: #3b82f6; transition: width 0.3s ease; } .expense-bar-emely { height: 100%; background: #ec4899; transition: width 0.3s ease; } .expense-bar-remaining { height: 100%; background: rgba(51,65,85,0.3); } .expense-partition { display: flex; gap: 8px; padding: 10px 14px; background: rgba(15,23,42,0.5); border-radius: 0 0 12px 12px; margin-top: -6px; margin-bottom: 10px; border: 1px solid rgba(51,65,85,0.15); border-top: none; } .expense-partition-col { flex: 1; text-align: center; padding: 4px; } .expense-partition-col.center { border-left: 1px solid rgba(51,65,85,0.3); border-right: 1px solid rgba(51,65,85,0.3); } .expense-partition-label { font-size: 11px; font-weight: 600; margin-bottom: 2px; } .expense-partition-value { font-size: 12px; color: #e2e8f0; font-weight: 600; } .expense-partition-sub { font-size: 10px; margin-top: 2px; } /* Mobile */ @media (max-width: 640px) { .expense-card { flex-wrap: wrap; padding: 12px; } .expense-main { width: 100%; min-width: auto; } .expense-header { flex-wrap: wrap; } .expense-partition { flex-direction: column; gap: 4px; padding: 8px 12px; } .expense-partition-col { display: flex; justify-content: space-between; align-items: center; text-align: left; padding: 4px 0; } .expense-partition-col.center { border-left: none; border-right: none; border-top: 1px solid rgba(51,65,85,0.2); border-bottom: 1px solid rgba(51,65,85,0.2); } .expense-partition-label { margin-bottom: 0; } .expense-partition-value { font-size: 13px; } }
+
 
   </style>
 <base target="_blank">
@@ -1298,114 +1300,112 @@ function loadDataJSONP() {
     }
 
     // === RENDER EXPENSES ===
+
     function renderExpenses() {
-        const s = appData.summary;
-        const presupuesto = appData.presupuesto || [];
-        const categorias = appData.categorias || [];
-        
-        // Filtrar solo gastos del mes actual (Jun 2026 = 6/1/2026)
-        const mesActual = '6/1/2026'; // Ajusta según tu lógica de mes actual
-        const gastosPresupuesto = presupuesto.filter(p => 
-            p.tipo === 'Gastos' && formatDateToString(p.mesAno) === mesActual
-        );
-        
-        // Si no hay filtro por mes, mostrar todos los gastos
-        const gastosMostrar = gastosPresupuesto.length > 0 ? gastosPresupuesto : presupuesto.filter(p => p.tipo === 'Gastos');
-        
-        // Calcular totales
-        const totalPresupuestado = gastosMostrar.reduce((a, b) => a + b.montoPresupuestado, 0);
-        const totalReal = gastosMostrar.reduce((a, b) => a + b.gastoReal, 0);
-        const totalDiferencia = totalPresupuestado - totalReal;
-        const pctConsumido = totalPresupuestado > 0 ? (totalReal / totalPresupuestado) * 100 : 0;
-        
-        // Encontrar alertas
-        const enRiesgo = gastosMostrar.filter(p => p.mensaje && p.mensaje.includes('Riesgo')).length;
-        const excedidos = gastosMostrar.filter(p => p.mensaje && p.mensaje.includes('sobrepasado')).length;
-        
-        const html = `
-            <div class="stat-card">
-                <div class="stat-header"><span class="stat-label">Presupuesto Total</span></div>
-                <div class="stat-value">${fmtMoney(totalPresupuestado)}</div>
-                <div class="stat-sub">${pctConsumido.toFixed(1)}% consumido</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-header"><span class="stat-label">Gasto Real</span></div>
-                <div class="stat-value" style="color:${pctConsumido > 100 ? '#f87171' : pctConsumido > 80 ? '#f59e0b' : '#4ade80'}">${fmtMoney(totalReal)}</div>
-                <div class="stat-sub">${fmtMoney(Math.abs(totalDiferencia))} ${totalDiferencia >= 0 ? 'restante' : 'excedido'}</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-header"><span class="stat-label">Categorías en Riesgo</span></div>
-                <div class="stat-value" style="color:${enRiesgo > 0 ? '#f59e0b' : '#4ade80'}">${enRiesgo}</div>
-                <div class="stat-sub">de ${gastosMostrar.length} categorías</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-header"><span class="stat-label">Excedidas</span></div>
-                <div class="stat-value" style="color:${excedidos > 0 ? '#f87171' : '#4ade80'}">${excedidos}</div>
-                <div class="stat-sub">categorías sobrepasadas</div>
-            </div>
-        `;
-        document.getElementById('expensesStats').innerHTML = html;
-        
-        // Lista detallada por categoría
-        const expenseList = gastosMostrar
-            .sort((a, b) => b.gastoReal - a.gastoReal)
-            .map(p => {
-                const categoria = categorias.find(c => c.id == p.idCategoria);
-                const nombre = categoria ? categoria.etiqueta : 'Categoría ' + p.idCategoria;
-                const pct = p.montoPresupuestado > 0 ? (p.gastoReal / p.montoPresupuestado) * 100 : 0;
-                const color = pct > 100 ? '#ef4444' : pct > 80 ? '#f59e0b' : '#22c55e';
-                const statusIcon = pct > 100 ? '⚠️' : pct > 80 ? '⚡' : '✅';
-                
-                return `
-                    <div class="asset-item" style="border-left: 3px solid ${color}">
-                        <div class="asset-icon-wrap" style="background:${color}20;color:${color}">${statusIcon}</div>
-                        <div class="asset-info" style="flex:2">
-                            <div class="asset-name">${nombre}</div>
-                            <div class="asset-meta">
-                                ${fmtMoney(p.gastoReal)} / ${fmtMoney(p.montoPresupuestado)} · 
-                                ${p.diasRestantes} días restantes
-                            </div>
-                            <div style="width:100%;margin-top:6px;">
-                              <!-- Barra de fondo gris -->
-                              <div style="width:100%;height:6px;background:rgba(51,65,85,0.4);border-radius:3px;overflow:hidden;display:flex;">
-                                  <!-- Anthony (azul) -->
-                                  <div style="width:${p.presupuestoAnthony > 0 ? Math.min((p.gastoAnthony / p.montoPresupuestado) * 100, 100) : 0}%;height:100%;background:#3b82f6;"></div>
-                                  <!-- Emely (rosado) -->
-                                  <div style="width:${p.presupuestoEmely > 0 ? Math.min((p.gastoEmely / p.montoPresupuestado) * 100, 100) : 0}%;height:100%;background:#ec4899;"></div>
-                              </div>
-                          </div>
+    const s = appData.summary;
+    const presupuesto = appData.presupuesto || [];
+    const categorias = appData.categorias || [];
+    
+    // Filtrar gastos del mes actual
+    const mesActual = '6/1/2026';
+    let gastosMostrar = presupuesto.filter(p => 
+        p.tipo === 'Gastos' && formatDateToString(p.mesAno) === mesActual
+    );
+    if (gastosMostrar.length === 0) {
+        gastosMostrar = presupuesto.filter(p => p.tipo === 'Gastos');
+    }
+    
+    // Totales
+    const totalPresupuestado = gastosMostrar.reduce((a, b) => a + b.montoPresupuestado, 0);
+    const totalReal = gastosMostrar.reduce((a, b) => a + b.gastoReal, 0);
+    const totalDiferencia = totalPresupuestado - totalReal;
+    const pctConsumido = totalPresupuestado > 0 ? (totalReal / totalPresupuestado) * 100 : 0;
+    const enRiesgo = gastosMostrar.filter(p => p.mensaje && p.mensaje.includes('Riesgo')).length;
+    const excedidos = gastosMostrar.filter(p => p.mensaje && p.mensaje.includes('sobrepasado')).length;
+    
+    // Cards de resumen
+    const html = `
+        <div class="stat-card">
+            <div class="stat-header"><span class="stat-label">Presupuesto Total</span></div>
+            <div class="stat-value">${fmtMoney(totalPresupuestado)}</div>
+            <div class="stat-sub">${pctConsumido.toFixed(1)}% consumido</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-header"><span class="stat-label">Gasto Real</span></div>
+            <div class="stat-value" style="color:${pctConsumido > 100 ? '#f87171' : pctConsumido > 80 ? '#f59e0b' : '#4ade80'}">${fmtMoney(totalReal)}</div>
+            <div class="stat-sub">${fmtMoney(Math.abs(totalDiferencia))} ${totalDiferencia >= 0 ? 'restante' : 'excedido'}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-header"><span class="stat-label">En Riesgo</span></div>
+            <div class="stat-value" style="color:${enRiesgo > 0 ? '#f59e0b' : '#4ade80'}">${enRiesgo}</div>
+            <div class="stat-sub">de ${gastosMostrar.length} categorías</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-header"><span class="stat-label">Excedidas</span></div>
+            <div class="stat-value" style="color:${excedidos > 0 ? '#f87171' : '#4ade80'}">${excedidos}</div>
+            <div class="stat-sub">categorías sobrepasadas</div>
+        </div>
+    `;
+    document.getElementById('expensesStats').innerHTML = html;
+    
+    // Lista de categorías
+    const expenseList = gastosMostrar
+        .sort((a, b) => b.gastoReal - a.gastoReal)
+        .map(p => {
+            const categoria = categorias.find(c => c.id == p.idCategoria);
+            const nombre = categoria ? categoria.etiqueta : 'Categoría ' + p.idCategoria;
+            const pct = p.montoPresupuestado > 0 ? (p.gastoReal / p.montoPresupuestado) * 100 : 0;
+            const color = pct > 100 ? '#ef4444' : pct > 80 ? '#f59e0b' : '#22c55e';
+            const icon = pct > 100 ? '⚠️' : pct > 80 ? '⚡' : '✅';
+            
+            // Barras de proporción
+            const anthonyPct = p.montoPresupuestado > 0 ? (p.gastoAnthony / p.montoPresupuestado) * 100 : 0;
+            const emelyPct = p.montoPresupuestado > 0 ? (p.gastoEmely / p.montoPresupuestado) * 100 : 0;
+            const remainingPct = Math.max(0, 100 - anthonyPct - emelyPct);
+            
+            return `
+                <div class="expense-card" style="border-left: 3px solid ${color}">
+                    <div class="expense-icon" style="background:${color}20;color:${color}">${icon}</div>
+                    <div class="expense-main">
+                        <div class="expense-header">
+                            <div class="expense-name">${nombre}</div>
+                            <div class="expense-pct" style="color:${color}">${pct.toFixed(1)}%</div>
                         </div>
-                        <div class="asset-value" style="text-align:right;min-width:120px">
-                            <div class="asset-amount" style="color:${color}">${pct.toFixed(1)}%</div>
-                            <div class="asset-meta">${fmtMoney(p.recomendacionDiaria)}/día</div>
+                        <div class="expense-meta">
+                            ${fmtMoney(p.gastoReal)} / ${fmtMoney(p.montoPresupuestado)} · ${p.diasRestantes} días restantes · ${fmtMoney(p.recomendacionDiaria)}/día
+                        </div>
+                        <div class="expense-bar-track">
+                            <div class="expense-bar-anthony" style="width:${anthonyPct}%"></div>
+                            <div class="expense-bar-emely" style="width:${emelyPct}%"></div>
+                            <div class="expense-bar-remaining" style="width:${remainingPct}%"></div>
                         </div>
                     </div>
-                    ${p.particion ? `
-                    <div style="display:flex;gap:8px;padding:8px 16px;background:rgba(30,41,59,0.3);border-radius:0 0 12px 12px;margin-top:-8px;margin-bottom:8px;">
-                      <div style="flex:1;text-align:center">
-                          <div style="font-size:11px;color:#3b82f6;font-weight:600">Anthony</div>
-                          <div style="font-size:12px;color:#e2e8f0;font-weight:600">${fmtMoney(p.gastoAnthony)} / ${fmtMoney(p.presupuestoAnthony)}</div>
-                          <div style="font-size:10px;color:${p.restanteAnthony >= 0 ? '#3b82f6' : '#f87171'}">${fmtMoney(p.restanteAnthony)}</div>
-                      </div>
-                      <div style="flex:1;text-align:center;border-left:1px solid rgba(51,65,85,0.3);border-right:1px solid rgba(51,65,85,0.3);padding:0 8px;">
-                          <div style="font-size:11px;color:#22c55e;font-weight:600">Restante</div>
-                          <div style="font-size:12px;color:#e2e8f0;font-weight:600">${fmtMoney(p.diferencia)}</div>
-                          <div style="font-size:10px;color:${p.diferencia >= 0 ? '#22c55e' : '#f87171'}">${p.diferencia >= 0 ? 'Disponible' : 'Excedido'}</div>
-                      </div>
-                      <div style="flex:1;text-align:center">
-                          <div style="font-size:11px;color:#ec4899;font-weight:600">Emely</div>
-                          <div style="font-size:12px;color:#e2e8f0;font-weight:600">${fmtMoney(p.gastoEmely)} / ${fmtMoney(p.presupuestoEmely)}</div>
-                          <div style="font-size:10px;color:${p.restanteEmely >= 0 ? '#ec4899' : '#f87171'}">${fmtMoney(p.restanteEmely)}</div>
-                      </div>
-                  </div>
-                    ` : ''}
-                `;
-            }).join('');
-        
-        document.getElementById('expenseCategoriesList').innerHTML = 
-            `<div class="asset-list">${expenseList}</div>`;
-    }
-
+                </div>
+                ${p.particion ? `
+                <div class="expense-partition">
+                    <div class="expense-partition-col">
+                        <div class="expense-partition-label" style="color:#3b82f6">Anthony</div>
+                        <div class="expense-partition-value">${fmtMoney(p.gastoAnthony)}</div>
+                        <div class="expense-partition-sub" style="color:${p.restanteAnthony >= 0 ? '#3b82f6' : '#f87171'}">${fmtMoney(p.restanteAnthony)} rest.</div>
+                    </div>
+                    <div class="expense-partition-col center">
+                        <div class="expense-partition-label" style="color:#22c55e">Restante</div>
+                        <div class="expense-partition-value">${fmtMoney(p.diferencia)}</div>
+                        <div class="expense-partition-sub" style="color:${p.diferencia >= 0 ? '#22c55e' : '#f87171'}">${p.diferencia >= 0 ? 'Disponible' : 'Excedido'}</div>
+                    </div>
+                    <div class="expense-partition-col">
+                        <div class="expense-partition-label" style="color:#ec4899">Emely</div>
+                        <div class="expense-partition-value">${fmtMoney(p.gastoEmely)}</div>
+                        <div class="expense-partition-sub" style="color:${p.restanteEmely >= 0 ? '#ec4899' : '#f87171'}">${fmtMoney(p.restanteEmely)} rest.</div>
+                    </div>
+                </div>
+                ` : ''}
+            `;
+        }).join('');
+    
+    document.getElementById('expenseCategoriesList').innerHTML = 
+        `<div class="asset-list">${expenseList}</div>`;
+}
 
 
     function renderAnalytics() {

@@ -431,6 +431,156 @@
     }
     /* ===== RESPONSIVE EXPENSES ===== */ .expense-card { display: flex; align-items: center; gap: 12px; padding: 14px 16px; background: rgba(30,41,59,0.5); border: 1px solid rgba(51,65,85,0.2); border-radius: 12px; margin-bottom: 10px; transition: all 0.2s; } .expense-card:hover { background: rgba(30,41,59,0.7); border-color: rgba(59,130,246,0.2); } .expense-icon { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; } .expense-main { flex: 1; min-width: 0; } .expense-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; } .expense-name { color: #e2e8f0; font-weight: 600; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .expense-pct { font-weight: 700; font-size: 0.85rem; white-space: nowrap; } .expense-meta { color: #64748b; font-size: 0.75rem; margin-bottom: 8px; } .expense-bar-track { width: 100%; height: 8px; background: rgba(51,65,85,0.4); border-radius: 4px; overflow: hidden; display: flex; } .expense-bar-anthony { height: 100%; background: #3b82f6; transition: width 0.3s ease; } .expense-bar-emely { height: 100%; background: #ec4899; transition: width 0.3s ease; } .expense-bar-remaining { height: 100%; background: rgba(51,65,85,0.3); } .expense-partition { display: flex; gap: 8px; padding: 10px 14px; background: rgba(15,23,42,0.5); border-radius: 0 0 12px 12px; margin-top: -6px; margin-bottom: 10px; border: 1px solid rgba(51,65,85,0.15); border-top: none; } .expense-partition-col { flex: 1; text-align: center; padding: 4px; } .expense-partition-col.center { border-left: 1px solid rgba(51,65,85,0.3); border-right: 1px solid rgba(51,65,85,0.3); } .expense-partition-label { font-size: 11px; font-weight: 600; margin-bottom: 2px; } .expense-partition-value { font-size: 12px; color: #e2e8f0; font-weight: 600; } .expense-partition-sub { font-size: 10px; margin-top: 2px; } /* Mobile */ @media (max-width: 640px) { .expense-card { flex-wrap: wrap; padding: 12px; } .expense-main { width: 100%; min-width: auto; } .expense-header { flex-wrap: wrap; } .expense-partition { flex-direction: column; gap: 4px; padding: 8px 12px; } .expense-partition-col { display: flex; justify-content: space-between; align-items: center; text-align: left; padding: 4px 0; } .expense-partition-col.center { border-left: none; border-right: none; border-top: 1px solid rgba(51,65,85,0.2); border-bottom: 1px solid rgba(51,65,85,0.2); } .expense-partition-label { margin-bottom: 0; } .expense-partition-value { font-size: 13px; } }
 
+    /* ===== RESPONSIVE INCOME (comparte estilos con expense) ===== */
+.income-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    background: rgba(30,41,59,0.5);
+    border: 1px solid rgba(51,65,85,0.2);
+    border-radius: 12px;
+    margin-bottom: 10px;
+    transition: all 0.2s;
+}
+.income-card:hover {
+    background: rgba(30,41,59,0.7);
+    border-color: rgba(16,185,129,0.2);
+}
+.income-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+}
+.income-main {
+    flex: 1;
+    min-width: 0;
+}
+.income-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.income-name {
+    color: #e2e8f0;
+    font-weight: 600;
+    font-size: 0.9rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.income-pct {
+    font-weight: 700;
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+.income-meta {
+    color: #64748b;
+    font-size: 0.75rem;
+    margin-bottom: 8px;
+}
+.income-bar-track {
+    width: 100%;
+    height: 8px;
+    background: rgba(51,65,85,0.4);
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+}
+.income-bar-anthony {
+    height: 100%;
+    background: #3b82f6;
+    transition: width 0.3s ease;
+}
+.income-bar-emely {
+    height: 100%;
+    background: #ec4899;
+    transition: width 0.3s ease;
+}
+.income-bar-remaining {
+    height: 100%;
+    background: rgba(51,65,85,0.3);
+}
+.income-partition {
+    display: flex;
+    gap: 8px;
+    padding: 10px 14px;
+    background: rgba(15,23,42,0.5);
+    border-radius: 0 0 12px 12px;
+    margin-top: -6px;
+    margin-bottom: 10px;
+    border: 1px solid rgba(51,65,85,0.15);
+    border-top: none;
+}
+.income-partition-col {
+    flex: 1;
+    text-align: center;
+    padding: 4px;
+}
+.income-partition-col.center {
+    border-left: 1px solid rgba(51,65,85,0.3);
+    border-right: 1px solid rgba(51,65,85,0.3);
+}
+.income-partition-label {
+    font-size: 11px;
+    font-weight: 600;
+    margin-bottom: 2px;
+}
+.income-partition-value {
+    font-size: 12px;
+    color: #e2e8f0;
+    font-weight: 600;
+}
+.income-partition-sub {
+    font-size: 10px;
+    margin-top: 2px;
+}
+
+/* Mobile income */
+@media (max-width: 640px) {
+    .income-card {
+        flex-wrap: wrap;
+        padding: 12px;
+    }
+    .income-main {
+        width: 100%;
+        min-width: auto;
+    }
+    .income-header {
+        flex-wrap: wrap;
+    }
+    .income-partition {
+        flex-direction: column;
+        gap: 4px;
+        padding: 8px 12px;
+    }
+    .income-partition-col {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        text-align: left;
+        padding: 4px 0;
+    }
+    .income-partition-col.center {
+        border-left: none;
+        border-right: none;
+        border-top: 1px solid rgba(51,65,85,0.2);
+        border-bottom: 1px solid rgba(51,65,85,0.2);
+    }
+    .income-partition-label {
+        margin-bottom: 0;
+    }
+    .income-partition-value {
+        font-size: 13px;
+    }
+}
 
   </style>
 <base target="_blank">
@@ -615,7 +765,7 @@
             <div class="chart-subtitle">Desglose por categoría</div>
           </div>
         </div>
-        <div id="incomeSourcesList"></div>
+        <div id="incomeCategoriesList"></div>
       </div>
     </section>
 
@@ -1246,58 +1396,158 @@ function loadDataJSONP() {
     // === RENDER INCOME ===
     function renderIncome() {
     const s = appData.summary;
-    const totalIncome = Object.values(appData.ingresos).reduce((a, b) => a + b.current, 0);
+    const presupuesto = appData.presupuesto || [];
+    const categorias = appData.categorias || [];
     
+    // IDs separados
+    const activoIds = ['14.1', '14.2', '14.4', '15', '16.1', '16.2', '16.3', '16.4', '17', '18', '19', '20', '21', '22', '24'];
+    const pasivoIds = ['23'];
+    
+    // Limpiar y filtrar
+    const allIngresos = presupuesto.filter(p => p.tipo === 'Ingresos').map(p => ({
+        ...p,
+        cleanId: String(p.id).replace(/^P/i, '')
+    }));
+    
+    const ingresosActivos = allIngresos.filter(p => activoIds.includes(p.cleanId));
+    const ingresosPasivos = allIngresos.filter(p => pasivoIds.includes(p.cleanId));
+    
+    // Totales por grupo
+    const totalPresupuestadoActivo = ingresosActivos.reduce((a, b) => a + (b.montoPresupuestado || 0), 0);
+    const totalRealActivo = ingresosActivos.reduce((a, b) => a + (b.gastoReal || 0), 0);
+    
+    const totalPresupuestadoPasivo = ingresosPasivos.reduce((a, b) => a + (b.montoPresupuestado || 0), 0);
+    const totalRealPasivo = ingresosPasivos.reduce((a, b) => a + (b.gastoReal || 0), 0);
+    
+    const totalReal = totalRealActivo + totalRealPasivo;
+    const totalDiferencia = (totalPresupuestadoActivo + totalPresupuestadoPasivo) - totalReal;
+    const pctIndependencia = totalReal > 0 ? (totalRealPasivo / totalReal) * 100 : 0;
+    
+    // Cards de resumen
     const html = `
         <div class="stat-card">
-        <div class="stat-header"><span class="stat-label">Ingresos del Mes</span></div>
-        <div class="stat-value">${fmtMoney(s.ingresosNetos.current)}</div>
-        <div class="stat-sub">Neto después de impuestos</div>
+            <div class="stat-header"><span class="stat-label">Ingreso Activo</span></div>
+            <div class="stat-value" style="color:#3b82f6">${fmtMoney(totalRealActivo)}</div>
+            <div class="stat-sub">${totalPresupuestadoActivo > 0 ? (totalRealActivo/totalPresupuestadoActivo*100).toFixed(1) : 0}% de meta</div>
         </div>
         <div class="stat-card">
-        <div class="stat-header"><span class="stat-label">Fuentes Activas</span></div>
-        <div class="stat-value">${Object.keys(appData.ingresos).filter(k => appData.ingresos[k].current > 0).length}</div>
-        <div class="stat-sub">de ${Object.keys(appData.ingresos).length} categorías</div>
+            <div class="stat-header"><span class="stat-label">Ingreso Pasivo</span></div>
+            <div class="stat-value" style="color:#8b5cf6">${fmtMoney(totalRealPasivo)}</div>
+            <div class="stat-sub">${totalPresupuestadoPasivo > 0 ? (totalRealPasivo/totalPresupuestadoPasivo*100).toFixed(1) : 0}% de meta</div>
         </div>
         <div class="stat-card">
-        <div class="stat-header"><span class="stat-label">Principal</span></div>
-        <div class="stat-value">${fmtMoney(appData.ingresos['Trabajo']?.current || 0)}</div>
-        <div class="stat-sub">Trabajo fijo</div>
+            <div class="stat-header"><span class="stat-label">Total Ingresos</span></div>
+            <div class="stat-value" style="color:#4ade80">${fmtMoney(totalReal)}</div>
+            <div class="stat-sub">${fmtMoney(totalDiferencia)} por recibir</div>
         </div>
         <div class="stat-card">
-        <div class="stat-header"><span class="stat-label">Ingresos Variables</span></div>
-        <div class="stat-value">${fmtMoney(totalIncome - (appData.ingresos['Trabajo']?.current || 0))}</div>
-        <div class="stat-sub">Clases, eventos, developer, etc.</div>
+            <div class="stat-header"><span class="stat-label">Independencia</span></div>
+            <div class="stat-value" style="color:${pctIndependencia >= 50 ? '#4ade80' : pctIndependencia >= 20 ? '#f59e0b' : '#3b82f6'}">
+                ${pctIndependencia.toFixed(1)}%
+            </div>
+            <div class="stat-sub">ingreso pasivo / total</div>
         </div>
     `;
     document.getElementById('incomeStats').innerHTML = html;
     
-    const incomeList = Object.entries(appData.ingresos)
-        .sort((a, b) => b[1].current - a[1].current)
-        .map(([name, data]) => {
-        const pct = totalIncome > 0 ? (data.current / totalIncome) * 100 : 0;
-        const colors = {
-            'Trabajo': '#3b82f6', 'Clases de Música': '#8b5cf6', 'Eventos': '#f59e0b',
-            'Iglesias': '#22c55e', 'Developer': '#ec4899', 'Regalos': '#f97316',
-            'Puntos': '#14b8a6', 'Intereses, dividendos': '#a855f7', 'Otros ingresos': '#64748b'
-        };
-        const color = colors[name] || '#64748b';
+    // Función para renderizar un item
+    const renderItem = (p, isPasivo, grupoTotal) => {
+        const categoria = categorias.find(c => String(c.id).trim() === String(p.idCategoria).trim());
+        const nombre = (categoria && categoria.nombre) ? categoria.nombre : 
+                       (categoria && categoria.etiqueta) ? categoria.etiqueta : 
+                       'Categoría ' + p.id;
+        
+        const presupuestoVal = p.montoPresupuestado || 0;
+        const realVal = p.gastoReal || 0;
+        const faltante = presupuestoVal - realVal;
+        const pct = presupuestoVal > 0 ? (realVal / presupuestoVal) * 100 : 0;
+        
+        // % que representa esta categoría del total de su grupo
+        const pctDelGrupo = grupoTotal > 0 ? (realVal / grupoTotal) * 100 : 0;
+        
+        const color = isPasivo ? '#8b5cf6' : (pct >= 100 ? '#10b981' : pct >= 80 ? '#3b82f6' : '#f59e0b');
+        const icon = isPasivo ? '📈' : (pct >= 100 ? '✅' : pct >= 80 ? '💵' : '⏳');
+        
+        // Barra: lleno = % alcanzado, gris = % faltante
+        const barWidth = Math.min(pct, 100);
+        const remainingWidth = 100 - barWidth;
+        
+        // Texto de expectativa
+        const expectativaText = faltante > 0 
+            ? `Falta ${fmtMoney(faltante)} para meta` 
+            : (faltante < 0 ? `Excedido en ${fmtMoney(Math.abs(faltante))}` : 'Meta alcanzada');
+        
+        const hasPartition = p.particion && ((p.gastoAnthony || 0) > 0 || (p.gastoEmely || 0) > 0 || (p.presupuestoAnthony || 0) > 0 || (p.presupuestoEmely || 0) > 0);
+        
         return `
-            <div class="asset-item">
-            <div class="asset-icon-wrap" style="background:${color}20;color:${color}">${name.charAt(0)}</div>
-            <div class="asset-info">
-                <div class="asset-name">${name}</div>
-                <div class="asset-meta">${pct.toFixed(1)}% del total</div>
-                <div class="asset-progress"><div class="asset-progress-fill" style="width:${pct}%;background:${color}"></div></div>
+            <div class="income-card" style="border-left: 3px solid ${color}">
+                <div class="income-icon" style="background:${color}20;color:${color}">${icon}</div>
+                <div class="income-main">
+                    <div class="income-header">
+                        <div class="income-name">${nombre}</div>
+                        <div style="text-align:right">
+                            <div class="income-pct" style="color:${color}">${pct.toFixed(1)}%</div>
+                            <div style="font-size:0.7rem;color:#64748b">${pctDelGrupo.toFixed(1)}% del ${isPasivo ? 'pasivo' : 'activo'}</div>
+                        </div>
+                    </div>
+                    <div class="income-meta">
+                        ${fmtMoney(realVal)} / ${fmtMoney(presupuestoVal)} · ${expectativaText} · ${p.diasRestantes || 0} días
+                    </div>
+                    <div class="income-bar-track">
+                        <div style="width:${barWidth}%;height:100%;background:${color};transition:width 0.3s ease;"></div>
+                        <div style="width:${remainingWidth}%;height:100%;background:rgba(51,65,85,0.3);"></div>
+                    </div>
+                </div>
             </div>
-            <div class="asset-value">
-                <div class="asset-amount">${fmtMoney(data.current)}</div>
+            ${hasPartition ? `
+            <div class="income-partition">
+                <div class="income-partition-col">
+                    <div class="income-partition-label" style="color:#3b82f6">Anthony</div>
+                    <div class="income-partition-value">${fmtMoney(p.gastoAnthony || 0)}</div>
+                    <div class="income-partition-sub" style="color:${(p.restanteAnthony || 0) >= 0 ? '#3b82f6' : '#f87171'}">${fmtMoney(p.restanteAnthony || 0)} rest.</div>
+                </div>
+                <div class="income-partition-col center">
+                    <div class="income-partition-label" style="color:#22c55e">Por Recibir</div>
+                    <div class="income-partition-value">${fmtMoney(p.diferencia || 0)}</div>
+                    <div class="income-partition-sub" style="color:${(p.diferencia || 0) >= 0 ? '#22c55e' : '#f87171'}">${(p.diferencia || 0) >= 0 ? 'Pendiente' : 'Excedido'}</div>
+                </div>
+                <div class="income-partition-col">
+                    <div class="income-partition-label" style="color:#ec4899">Emely</div>
+                    <div class="income-partition-value">${fmtMoney(p.gastoEmely || 0)}</div>
+                    <div class="income-partition-sub" style="color:${(p.restanteEmely || 0) >= 0 ? '#ec4899' : '#f87171'}">${fmtMoney(p.restanteEmely || 0)} rest.</div>
+                </div>
             </div>
-            </div>
+            ` : ''}
         `;
-        }).join('');
-    document.getElementById('incomeSourcesList').innerHTML = `<div class="asset-list">${incomeList}</div>`;
-    }
+    };
+    
+    // Renderizar activos
+    const activosList = ingresosActivos
+        .sort((a, b) => (b.gastoReal || 0) - (a.gastoReal || 0))
+        .map(p => renderItem(p, false, totalRealActivo))
+        .join('');
+    
+    // Renderizar pasivos
+    const pasivosList = ingresosPasivos
+        .sort((a, b) => (b.gastoReal || 0) - (a.gastoReal || 0))
+        .map(p => renderItem(p, true, totalRealPasivo))
+        .join('');
+    
+    const fullList = `
+        ${activosList}
+        ${pasivosList.length > 0 ? `
+        <div style="padding:16px 8px 8px 8px;color:#8b5cf6;font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;display:flex;align-items:center;gap:8px;">
+            <span style="width:24px;height:2px;background:#8b5cf6;border-radius:1px;"></span>
+            Ingresos Pasivos · ${fmtMoney(totalRealPasivo)} total
+        </div>
+        ${pasivosList}
+        ` : ''}
+    `;
+    
+    document.getElementById('incomeCategoriesList').innerHTML = 
+        fullList ? `<div class="asset-list">${fullList}</div>` : '<div style="color:#64748b;padding:20px;text-align:center;">No hay ingresos registrados.</div>';
+}
+
 
     // === RENDER EXPENSES ===
 

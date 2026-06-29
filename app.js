@@ -1,4 +1,4 @@
-    // ============================================================
+// ============================================================
     // BALANCE SHEET — DASHBOARD JAVASCRIPT
     // Backend: Google Apps Script
     // ============================================================
@@ -29,6 +29,82 @@
         'Alcanza Inversiones': '#8b5cf6', 'Haina Investment 2034': '#ef4444',
         'Fondo de Fondos Altio': '#14b8a6', 'TradeStation': '#6366f1'
     };
+
+// === LÍMITES DE CRÉDITO (ajustar si el banco cambia los límites) ===
+// NOTA: Los valores USD asumen que la hoja ya convierte a DOP.
+// Si la hoja guarda USD crudos, multiplicar por la tasa de cambio aquí.
+// Límites en USD se multiplican por la tasa dinámica del backend
+function getTasaUSD() {
+    // Último valor de Moneda US del backend (tasa USD→DOP del mes actual)
+    const usdHistory = appData?.monedas?.usd?.history || [];
+    for (let i = usdHistory.length - 1; i >= 0; i--) {
+        if (usdHistory[i].value > 0) return usdHistory[i].value;
+    }
+    return 59; // fallback si no hay data
+}
+
+function getCreditLimit(name) {
+    const tasa = getTasaUSD();
+    const limitsUSD = {
+        'Crédito Caribe USD': 350,
+        'Crédito Banreservas Gold USD': 500,
+        'Crédito BHD Premia USD': 340
+    };
+    const limitsDOP = {
+        'Crédito Banreservas': 8000,
+        'Crédito Qik': 54000,
+        'Crédito Popular Clásica': 80000,
+        'Crédito Caribe DOP': 54000,
+        'Crédito Banreservas Gold': 50000,
+        'Crédito BHD Premia DOP': 41000,
+        'Extra Limite Caribe': 40000,
+        'Credimás Banreservas': 50000,
+        'Prestamo Popular': 0
+    };
+    if (limitsUSD[name]) return limitsUSD[name] * tasa;
+    return limitsDOP[name] || 0;
+}
+
+// Constantes de nombres (los límites reales se calculan con getCreditLimit)
+const CREDIT_LIMITS = {}; // legacy, no usar directamente
+
+const TARJETAS_NOMBRES = [
+    'Crédito Banreservas','Crédito Qik','Crédito Popular Clásica',
+    'Crédito Caribe DOP','Crédito Caribe USD','Crédito Banreservas Gold',
+    'Crédito Banreservas Gold USD','Crédito BHD Premia DOP','Crédito BHD Premia USD'
+];
+
+const LINEAS_NOMBRES = ['Extra Limite Caribe', 'Credimás Banreservas'];
+const PRESTAMOS_NOMBRES = ['Prestamo Popular'];
+
+function getDeuda(data) {
+    // En la hoja: positivo = deuda (gastado), negativo = crédito a favor
+    return data && data.current > 0 ? data.current : 0;
+}
+function getDisponible(name, data) {
+    const limite = getCreditLimit(name);
+    if (limite === 0) return 0;
+    const deuda = getDeuda(data);
+    const excedente = data && data.current < 0 ? Math.abs(data.current) : 0;
+    return Math.max(0, limite - deuda + excedente);
+}
+function getUtilizacion(name, data) {
+    const limite = getCreditLimit(name);
+    if (limite === 0) return 0;
+    return Math.min(100, (getDeuda(data) / limite) * 100);
+}
+function getDeudaRotativa() {
+    // Suma deuda de tarjetas + líneas (NO préstamos)
+    // positivo en hoja = deuda | negativo = crédito a favor
+    let deuda = 0;
+    for (const [name, data] of Object.entries(appData.creditos || {})) {
+        if (TARJETAS_NOMBRES.includes(name) || LINEAS_NOMBRES.includes(name)) {
+            deuda += getDeuda(data);
+        }
+    }
+    return deuda;
+}
+
 
     function openAssetModal(assetName, assetData, color) {
         const modal = document.getElementById('assetDetailModal');
@@ -221,6 +297,8 @@
             if (res.ok) {
                 appData = await res.json();
                 console.log('✅ Datos vía Fetch');
+                // DEBUG: Ver todo el summary
+
                 return;
             }
         } catch (e) {
@@ -387,6 +465,45 @@ function loadDataJSONP() {
           </div>
       `;  
       document.getElementById('overviewStats').innerHTML = html;
+
+      // === PODER ADQUISITIVO TOTAL ===
+      // Límite total de crédito desde el último mes con datos
+      const CREDIT_LIMIT_TOTAL = getCreditLimitTotal();
+      const activosDisponibles = liquidity + investments;
+      const creditoDisponible = Math.max(0, CREDIT_LIMIT_TOTAL - getDeudaRotativa());
+      const poderAdquisitivo = activosDisponibles + creditoDisponible;
+
+      const pctActivos = poderAdquisitivo > 0 ? (activosDisponibles / poderAdquisitivo) * 100 : 0;
+      const pctCredito = poderAdquisitivo > 0 ? (creditoDisponible / poderAdquisitivo) * 100 : 0;
+      const pctTotal = poderAdquisitivo > 0 ? 100 : 0;
+
+      const poderHtml = `
+          <div class="stat-card info" style="--bar-width: ${pctActivos.toFixed(1)}%">
+              <div class="stat-header">
+                  <span class="stat-label">Activos Disponibles</span>
+              </div>
+              <div class="stat-value">${fmtMoney(activosDisponibles)}</div>
+              <div class="stat-sub">Líquido + Inversiones</div>
+              <div class="stat-bar"></div>
+          </div>
+          <div class="stat-card warning" style="--bar-width: ${pctCredito.toFixed(1)}%">
+              <div class="stat-header">
+                  <span class="stat-label">+ Crédito Disponible</span>
+              </div>
+              <div class="stat-value">${fmtMoney(creditoDisponible)}</div>
+              <div class="stat-sub">de ${fmtMoney(CREDIT_LIMIT_TOTAL)} límite total</div>
+              <div class="stat-bar"></div>
+          </div>
+          <div class="stat-card success" style="--bar-width: ${pctTotal.toFixed(1)}%">
+              <div class="stat-header">
+                  <span class="stat-label">= Poder Adquisitivo Total</span>
+              </div>
+              <div class="stat-value">${fmtMoney(poderAdquisitivo)}</div>
+              <div class="stat-sub">Activos + Líneas de crédito</div>
+              <div class="stat-bar"></div>
+          </div>
+      `;
+      document.getElementById('poderAdquisitivoStats').innerHTML = poderHtml;
     }
     function formatDateToString(dateValue) {
       if (!dateValue) return '';
@@ -492,53 +609,175 @@ function loadDataJSONP() {
 
     function renderLiabilities() {
     const s = appData.summary;
-    const creditTotal = Object.values(appData.creditos).reduce((a, b) => a + Math.max(0, b.current), 0);
-    
+
+    // ─── Separar créditos en 3 grupos ───
+    // NOTA: extractSection en el backend filtra items con current === 0,
+    // por eso las líneas y préstamos sin deuda no aparecen en appData.creditos.
+    // Los forzamos desde las constantes de nombres.
+    const tarjetas = [], lineas = [], prestamos = [];
+
+    // 1. Tarjetas que SÍ llegan del backend
+    for (const [name, data] of Object.entries(appData.creditos || {})) {
+        if (TARJETAS_NOMBRES.includes(name)) tarjetas.push({ name, data });
+    }
+
+    // 2. Líneas: buscar en backend, si no están crear con current=0
+    for (const name of LINEAS_NOMBRES) {
+        const data = appData.creditos?.[name];
+        if (data) {
+            lineas.push({ name, data });
+        } else {
+            // Forzar creación con historial vacío o desde datos crudos
+            lineas.push({ 
+                name, 
+                data: { current: 0, previous: 0, change: 0, changePct: 0, history: [] } 
+            });
+        }
+    }
+
+    // 3. Préstamos: igual que líneas
+    for (const name of PRESTAMOS_NOMBRES) {
+        const data = appData.creditos?.[name];
+        if (data) {
+            prestamos.push({ name, data });
+        } else {
+            prestamos.push({ 
+                name, 
+                data: { current: 0, previous: 0, change: 0, changePct: 0, history: [] } 
+            });
+        }
+    }
+
+    // ─── Cálculos por grupo ───
+    const deudaTarjetas = tarjetas.reduce((sum, t) => sum + getDeuda(t.data), 0);
+    const deudaLineas   = lineas.reduce((sum, l) => sum + getDeuda(l.data), 0);
+    const deudaPrestamos = prestamos.reduce((sum, p) => sum + getDeuda(p.data), 0);
+    const totalPasivos = s.pasivosTotal.current; // oficial desde backend
+
+    const limiteTarjetas = TARJETAS_NOMBRES.reduce((sum, n) => sum + getCreditLimit(n), 0);
+    const limiteLineas   = LINEAS_NOMBRES.reduce((sum, n) => sum + getCreditLimit(n), 0);
+    const limiteTotal    = limiteTarjetas + limiteLineas;
+
+    const disponibleTotal = Math.max(0, limiteTotal - deudaTarjetas - deudaLineas);
+    const utilizacionPct  = limiteTotal > 0 ? ((deudaTarjetas + deudaLineas) / limiteTotal) * 100 : 0;
+
+    // ─── Stat Cards ───
     const html = `
         <div class="stat-card">
-        <div class="stat-header"><span class="stat-label">Total Créditos</span></div>
-        <div class="stat-value">${fmtMoney(s.pasivosTotal.current)}</div>
-        <div class="stat-sub">${Object.keys(appData.creditos).length} tarjetas activas</div>
+            <div class="stat-header"><span class="stat-label">Total Pasivos</span></div>
+            <div class="stat-value">${fmtMoney(totalPasivos)}</div>
+            <div class="stat-sub">${tarjetas.length} tarjetas · ${lineas.length} líneas · ${prestamos.length} préstamos</div>
         </div>
         <div class="stat-card">
-        <div class="stat-header"><span class="stat-label">Utilización</span></div>
-        <div class="stat-value">${((s.pasivosTotal.current/361782.60)*100).toFixed(1)}%</div>
-        <div class="stat-sub">de RD$361,782.60 límite total</div>
+            <div class="stat-header"><span class="stat-label">Utilización Crédito</span></div>
+            <div class="stat-value">${utilizacionPct.toFixed(1)}%</div>
+            <div class="stat-sub">de ${fmtMoney(limiteTotal)} límite · ${fmtMoney(disponibleTotal)} disponible</div>
         </div>
         <div class="stat-card">
-        <div class="stat-header"><span class="stat-label">Ratio Deuda/Patrimonio</span></div>
-        <div class="stat-value">${((s.pasivosTotal.current/s.patrimonioNeto.current)*100).toFixed(1)}%</div>
-        <div class="stat-sub">Muy saludable (&lt;20%)</div>
+            <div class="stat-header"><span class="stat-label">Ratio Deuda/Patrimonio</span></div>
+            <div class="stat-value">${((totalPasivos/s.patrimonioNeto.current)*100).toFixed(1)}%</div>
+            <div class="stat-sub">${totalPasivos > s.patrimonioNeto.current * 0.5 ? '⚠️ Alto' : '✅ Saludable'} (&lt;50%)</div>
         </div>
         <div class="stat-card">
-        <div class="stat-header"><span class="stat-label">Líquido Cubre Deuda</span></div>
-        <div class="stat-value">${(s.liquidoTotal.current/s.pasivosTotal.current).toFixed(1)}x</div>
-        <div class="stat-sub">Cobertura inmediata</div>
+            <div class="stat-header"><span class="stat-label">Líquido Cubre Deuda</span></div>
+            <div class="stat-value">${s.liquidoTotal.current > 0 ? (s.liquidoTotal.current/totalPasivos).toFixed(1) : '0.0'}x</div>
+            <div class="stat-sub">Cobertura inmediata</div>
         </div>
     `;
     document.getElementById('liabilitiesStats').innerHTML = html;
-    
-    // Lista de créditos
-    const creditList = Object.entries(appData.creditos)
-        .sort((a, b) => Math.abs(b[1].current) - Math.abs(a[1].current))
-        .map(([name, data]) => {
-        const isNegative = data.current < 0;
-        const color = isNegative ? '#22c55e' : '#ef4444';
-        return `
-            <div class="asset-item">
-            <div class="asset-icon-wrap" style="background:${color}20;color:${color}">💳</div>
-            <div class="asset-info">
-                <div class="asset-name">${name}</div>
-                <div class="asset-meta">${isNegative ? 'Crédito a favor' : 'Saldo pendiente'}</div>
-            </div>
-            <div class="asset-value">
-                <div class="asset-amount" style="color:${isNegative ? '#4ade80' : '#f87171'}">${fmtMoney(Math.abs(data.current))}</div>
-            </div>
-            </div>
-        `;
+
+    // ─── Renderizar Tarjetas de Crédito ───
+    const tarjetasHtml = tarjetas
+        .sort((a, b) => getDeuda(b.data) - getDeuda(a.data))
+        .map(({name, data}) => {
+            const deuda = getDeuda(data);
+            const limite = getCreditLimit(name);
+            const disponible = getDisponible(name, data);
+            const util = getUtilizacion(name, data);
+            const color = util > 90 ? '#ef4444' : util > 70 ? '#f59e0b' : '#22c55e';
+            return `
+                <div class="liability-item">
+                    <div class="liability-icon-wrap" style="background:${color}20;color:${color}">💳</div>
+                    <div class="liability-info">
+                        <div class="liability-name">${name}</div>
+                        <div class="liability-meta">Límite: ${fmtMoney(limite)} · Usado: ${fmtMoney(deuda)} · ${util.toFixed(1)}%</div>
+                        <div class="liability-progress-track">
+                            <div class="liability-progress-fill" style="width:${util}%;background:${color}"></div>
+                        </div>
+                    </div>
+                    <div class="liability-value">
+                        <div class="liability-amount" style="color:${deuda > 0 ? '#f87171' : '#4ade80'}">${fmtMoney(deuda)}</div>
+                        <div class="liability-sub">${fmtMoney(disponible)} disp.</div>
+                    </div>
+                </div>
+            `;
         }).join('');
-    document.getElementById('creditCardsList').innerHTML = `<div class="asset-list">${creditList}</div>`;
-    }
+    document.getElementById('creditCardsList').innerHTML = tarjetasHtml ? 
+        `<div class="liability-list">${tarjetasHtml}</div>` : 
+        '<div style="color:#64748b;padding:20px;text-align:center;">No hay tarjetas registradas.</div>';
+
+    const tarjetasDisp = tarjetas.reduce((sum, t) => sum + getDisponible(t.name, t.data), 0);
+    const tarjetasUtil = limiteTarjetas > 0 ? (deudaTarjetas / limiteTarjetas) * 100 : 0;
+    const tarjetasHeader = document.getElementById('tarjetasLimiteTotal');
+    if (tarjetasHeader) tarjetasHeader.textContent = fmtMoney(limiteTarjetas);
+
+    // ─── Renderizar Líneas de Crédito ───
+    const lineasHtml = lineas
+        .sort((a, b) => getDeuda(b.data) - getDeuda(a.data))
+        .map(({name, data}) => {
+            const deuda = getDeuda(data);
+            const limite = getCreditLimit(name);
+            const disponible = getDisponible(name, data);
+            const util = getUtilizacion(name, data);
+            const color = util > 90 ? '#ef4444' : util > 70 ? '#f59e0b' : '#22c55e';
+            return `
+                <div class="liability-item">
+                    <div class="liability-icon-wrap" style="background:${color}20;color:${color}">📈</div>
+                    <div class="liability-info">
+                        <div class="liability-name">${name}</div>
+                        <div class="liability-meta">Límite: ${fmtMoney(limite)} · Usado: ${fmtMoney(deuda)} · ${util.toFixed(1)}%</div>
+                        <div class="liability-progress-track">
+                            <div class="liability-progress-fill" style="width:${util}%;background:${color}"></div>
+                        </div>
+                    </div>
+                    <div class="liability-value">
+                        <div class="liability-amount" style="color:${deuda > 0 ? '#f87171' : '#4ade80'}">${fmtMoney(deuda)}</div>
+                        <div class="liability-sub">${fmtMoney(disponible)} disp.</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    document.getElementById('lineasCreditoList').innerHTML = lineasHtml ? 
+        `<div class="liability-list">${lineasHtml}</div>` : 
+        '<div style="color:#64748b;padding:20px;text-align:center;">No hay líneas de crédito registradas.</div>';
+
+    const lineasDisp = lineas.reduce((sum, l) => sum + getDisponible(l.name, l.data), 0);
+    const lineasUtil = limiteLineas > 0 ? (deudaLineas / limiteLineas) * 100 : 0;
+    const lineasHeader = document.getElementById('lineasLimiteTotal');
+    if (lineasHeader) lineasHeader.textContent = fmtMoney(limiteLineas);
+
+    // ─── Renderizar Préstamos ───
+    const prestamosHtml = prestamos
+        .sort((a, b) => getDeuda(b.data) - getDeuda(a.data))
+        .map(({name, data}) => {
+            const deuda = getDeuda(data);
+            return `
+                <div class="liability-item">
+                    <div class="liability-icon-wrap" style="background:#8b5cf620;color:#8b5cf6">🏦</div>
+                    <div class="liability-info">
+                        <div class="liability-name">${name}</div>
+                        <div class="liability-meta">Préstamo personal · Saldo pendiente</div>
+                    </div>
+                    <div class="liability-value">
+                        <div class="liability-amount" style="color:#f87171">${fmtMoney(deuda)}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    document.getElementById('prestamosList').innerHTML = prestamosHtml ? 
+        `<div class="liability-list">${prestamosHtml}</div>` : 
+        '<div style="color:#64748b;padding:20px;text-align:center;">No hay préstamos registrados.</div>';
+}
 
     // === RENDER INCOME ===
     function renderIncome() {
@@ -816,8 +1055,22 @@ function loadDataJSONP() {
       const trabajoIncome = appData.ingresos['Trabajo']?.current || 0;
       const otherIncome = avgIncome - trabajoIncome;
       const workContribution = avgIncome > 0 ? (trabajoIncome / avgIncome) * 100 : 0;
-      
 
+      // CAGR dinámico desde el primer dato histórico disponible
+      const patHist = s.patrimonioNeto.history;
+      let cagrDisplay = '—';
+      let cagrColor = '#f59e0b';
+      if (patHist.length >= 2) {
+          const firstVal = patHist[0].value;
+          const lastVal  = patHist[patHist.length - 1].value;
+          const years    = (patHist.length - 1) / 12;
+          if (firstVal > 0 && years > 0) {
+              const cagr = (Math.pow(lastVal / firstVal, 1 / years) - 1) * 100;
+              cagrDisplay = cagr.toFixed(1) + '%';
+              cagrColor   = cagr >= 10 ? '#4ade80' : '#f59e0b';
+          }
+      }
+      const cagrSince = patHist.length > 0 ? patHist[0].date : 'inicio';
 
       const html = `
           <div class="stat-card">
@@ -837,8 +1090,8 @@ function loadDataJSONP() {
           </div>
           <div class="stat-card">
               <div class="stat-header"><span class="stat-label">CAGR Patrimonio</span></div>
-              <div class="stat-value" style="color:#4ade80">19.3%</div>
-              <div class="stat-sub">Desde Mar 2022 (nominal)</div>
+              <div class="stat-value" style="color:${cagrColor}">${cagrDisplay}</div>
+              <div class="stat-sub">Desde ${cagrSince} (nominal)</div>
           </div>
       `;
       document.getElementById('analyticsStats').innerHTML = html;
@@ -861,8 +1114,8 @@ function calculateRatios() {
     const patHistory = s.patrimonioNeto.history;
     const last12 = patHistory.slice(-12);
 
-    // Current Ratio
-    const currentRatio = pasivos > 0 ? activos / pasivos : 0;
+    // Current Ratio (activos líquidos / pasivos — excluye activos ilíquidos a largo plazo)
+    const currentRatio = pasivos > 0 ? liquido / pasivos : 0;
 
     // Quick Ratio (activos rápidamente convertibles / pasivos)
     const quickAssets = liquido + inversiones;
@@ -883,9 +1136,10 @@ function calculateRatios() {
     // Cobertura de Deuda (Líquido / Pasivos como %)
     const debtCoverage = pasivos > 0 ? (liquido / pasivos) * 100 : 0;
 
-    // ROA (Return on Assets) - usando patrimonio neto como proxy de ganancia acumulada
-    // O mejor: ingresos netos / activos totales
-    const roa = activos > 0 ? (ingresos / activos) * 100 : 0;
+    // ROA (Return on Assets) - ingresos anualizados / activos totales
+    // ingresos es mensual → multiplicar ×12 para comparar contra el stock de activos
+    const ingresosAnualizados = ingresos * 12;
+    const roa = activos > 0 ? (ingresosAnualizados / activos) * 100 : 0;
 
     // Tasa de Crecimiento YoY (Patrimonio)
     let yoyGrowth = 0;
@@ -915,9 +1169,13 @@ function calculateRatios() {
     // Ratio de Ahorro
     const savingsRate = ingresos > 0 ? ((ingresos - s.gastosTotal.current) / ingresos) * 100 : 0;
 
-    // Independencia Financiera (Ingresos Pasivos / Gastos)
-    // Aproximamos con inversiones / gastos como proxy
-    const fiRatio = s.gastosTotal.current > 0 ? (ingresos / s.gastosTotal.current) * 100 : 0;
+    // Independencia Financiera = Ingresos Pasivos / Gastos
+    // Solo el ingreso pasivo (id '23' en presupuesto) refleja verdadera independencia
+    const presupuesto = appData.presupuesto || [];
+    const ingresoPasivo = presupuesto
+        .filter(p => p.tipo === 'Ingresos' && String(p.id).replace(/^P/i, '') === '23')
+        .reduce((a, b) => a + (b.gastoReal || 0), 0);
+    const fiRatio = s.gastosTotal.current > 0 ? (ingresoPasivo / s.gastosTotal.current) * 100 : 0;
 
     return {
         liquidity: {
@@ -930,7 +1188,7 @@ function calculateRatios() {
             debtToEquity: { value: debtToEquity, label: 'Deuda / Patrimonio', format: 'pct', threshold: 50 },
             debtToAssets: { value: debtToAssets, label: 'Deuda / Activos', format: 'pct', threshold: 50 },
             debtCoverage: { value: debtCoverage, label: 'Cobertura de Deuda', format: 'pct', threshold: 100 },
-            liquidityCoverage: { value: pasivos > 0 ? liquido / pasivos : 0, label: 'Cobertura Líquida', format: 'x', threshold: 1 }
+            monthsCovered: { value: s.gastosTotal.current > 0 ? liquido / s.gastosTotal.current : 0, label: 'Meses de gastos cubiertos', format: 'x', threshold: 6 }
         },
         profitability: {
             roa: { value: roa, label: 'ROA (Return on Assets)', format: 'pct', threshold: 5 },
@@ -976,8 +1234,12 @@ function renderKpiCard(item, lowerIsBetter) {
     const formatted = formatKpiValue(item);
 
     // Gauge width (0-100%)
+    // Para "lower is better": invertir el fill para que menor deuda = barra más llena
     let gaugeWidth = 0;
-    if (item.format === 'pct') {
+    if (lowerIsBetter) {
+        const ref = item.format === 'pct' ? item.threshold * 2 : item.threshold * 3;
+        gaugeWidth = Math.min(100, Math.max(0, (1 - item.value / ref) * 100));
+    } else if (item.format === 'pct') {
         gaugeWidth = Math.min(100, Math.max(0, (item.value / (item.threshold * 2)) * 100));
     } else if (item.format === 'x') {
         gaugeWidth = Math.min(100, Math.max(0, (item.value / (item.threshold * 3)) * 100));
@@ -1990,3 +2252,11 @@ function renderRatiosRadarChart() {
     a.click();
     URL.revokeObjectURL(url);
     }
+    // Helper para obtener el límite total de crédito desde los datos
+    function getCreditLimitTotal() {
+    // Suma límites de tarjetas + líneas de crédito (NO préstamos)
+    let total = 0;
+    for (const name of TARJETAS_NOMBRES) total += getCreditLimit(name);
+    for (const name of LINEAS_NOMBRES)   total += getCreditLimit(name);
+    return total;
+}

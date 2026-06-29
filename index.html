@@ -10,6 +10,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 
 <base target="_blank">
+<base target="_blank">
 </head>
 <body>
   <div class="loading-overlay" id="loading">
@@ -56,6 +57,16 @@
   <main class="main-content">
     <section id="overview" class="section active">
       <div class="stats-grid" id="overviewStats"></div>
+
+      <!-- Poder Adquisitivo Total -->
+      <div class="poder-section">
+        <div class="poder-header">
+          <span class="poder-icon">💳</span>
+          <span class="poder-title">Poder Adquisitivo Total</span>
+        </div>
+        <div class="stats-grid" id="poderAdquisitivoStats"></div>
+      </div>
+
       <div class="two-col">
         <div class="chart-card">
           <div class="chart-header">
@@ -149,25 +160,50 @@
 
     <section id="liabilities" class="section">
       <h2 class="section-title">Pasivos</h2>
-      <p class="section-subtitle">Créditos y deudas</p>
+      <p class="section-subtitle">Tarjetas, líneas de crédito y préstamos</p>
       <div class="stats-grid" id="liabilitiesStats"></div>
+
       <div class="chart-card">
         <div class="chart-header">
           <div>
             <div class="chart-title">Evolución de Pasivos</div>
-            <div class="chart-subtitle">Balance de créditos</div>
+            <div class="chart-subtitle">Balance total de créditos</div>
           </div>
         </div>
         <div class="chart-container" id="liabilitiesChart"></div>
       </div>
+
+      <!-- Tarjetas de Crédito -->
       <div class="chart-card">
         <div class="chart-header">
           <div>
-            <div class="chart-title">Tarjetas de Crédito</div>
-            <div class="chart-subtitle">Saldos actuales</div>
+            <div class="chart-title">💳 Tarjetas de Crédito</div>
+            <div class="chart-subtitle">Límite total: <span id="tarjetasLimiteTotal">—</span></div>
           </div>
         </div>
         <div id="creditCardsList"></div>
+      </div>
+
+      <!-- Líneas de Crédito -->
+      <div class="chart-card">
+        <div class="chart-header">
+          <div>
+            <div class="chart-title">📈 Líneas de Crédito</div>
+            <div class="chart-subtitle">Límite total: <span id="lineasLimiteTotal">—</span></div>
+          </div>
+        </div>
+        <div id="lineasCreditoList"></div>
+      </div>
+
+      <!-- Préstamos -->
+      <div class="chart-card">
+        <div class="chart-header">
+          <div>
+            <div class="chart-title">🏦 Préstamos</div>
+            <div class="chart-subtitle">Saldo pendiente</div>
+          </div>
+        </div>
+        <div id="prestamosList"></div>
       </div>
     </section>
 
@@ -273,7 +309,6 @@
         <div class="chart-container" id="incomeVsExpenseChart"></div>
       </div>
     </section>
-
     <section id="ratios" class="section">
       <h2 class="section-title">Ratios & KPIs</h2>
       <p class="section-subtitle">Métricas de salud financiera</p>

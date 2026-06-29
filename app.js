@@ -46,7 +46,7 @@ function getTasaUSD() {
 function getCreditLimit(name) {
     const tasa = getTasaUSD();
     const limitsUSD = {
-        'Crédito Caribe USD': 350,
+        'Crédito Caribe USD': 450,
         'Crédito Banreservas Gold USD': 500,
         'Crédito BHD Premia USD': 340
     };
@@ -57,9 +57,9 @@ function getCreditLimit(name) {
         'Crédito Caribe DOP': 54000,
         'Crédito Banreservas Gold': 50000,
         'Crédito BHD Premia DOP': 41000,
-        'Extra Limite Caribe': 40000,
+        'Extra Limite Caribe': 40500,
         'Credimás Banreservas': 50000,
-        'Prestamo Popular': 0
+        'Prestamo Popular': 164000
     };
     if (limitsUSD[name]) return limitsUSD[name] * tasa;
     return limitsDOP[name] || 0;
@@ -124,6 +124,152 @@ function getDeudaRotativa() {
             assetDetailChart.destroy();
             assetDetailChart = null;
         }
+    }
+
+    // === MODAL DE DETALLE DE CRÉDITO ===
+    function openCreditModal(creditName) {
+        const modal = document.getElementById('creditDetailModal');
+        const title = document.getElementById('creditModalTitle');
+        const info = appData.creditoDB?.find(c => c.nombre === creditName);
+
+        if (!info) {
+            console.warn('No se encontró info de DB_CREDITO para:', creditName);
+            return;
+        }
+
+        title.textContent = creditName;
+        modal.classList.add('active');
+        renderCreditDetail(info);
+    }
+
+    function closeCreditModal() {
+        document.getElementById('creditDetailModal').classList.remove('active');
+    }
+
+    // Cerrar modal al hacer click fuera
+    document.addEventListener('click', function(e) {
+        const modal = document.getElementById('creditDetailModal');
+        if (e.target === modal) closeCreditModal();
+    });
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closeCreditModal();
+    });
+
+    function renderCreditDetail(info) {
+        const container = document.getElementById('creditModalBody');
+        const isOverdue = info.diasFaltaPago !== '' && Number(info.diasFaltaPago) < 0;
+        const isClose = info.diasFaltaPago !== '' && Number(info.diasFaltaPago) >= 0 && Number(info.diasFaltaPago) <= 5;
+        
+        const statusColor = isOverdue ? '#ef4444' : isClose ? '#f59e0b' : '#22c55e';
+        const statusText = isOverdue ? 'Vencido' : isClose ? 'Pronto' : 'Al día';
+        const statusIcon = isOverdue ? '⚠️' : isClose ? '⏰' : '✅';
+
+        const pctNum = parseFloat(info.pctUso)*100 || 0;
+        const utilColor = pctNum > 90 ? '#ef4444' : pctNum > 70 ? '#f59e0b' : '#22c55e';
+
+        container.innerHTML = `
+            <div class="credit-detail-header">
+                <div class="credit-detail-badge" style="background:${statusColor}20;color:${statusColor}">
+                    ${statusIcon} ${statusText}
+                </div>
+                <div class="credit-detail-bank">${info.banco} · ${info.tipoTarjeta || 'Crédito'}</div>
+            </div>
+
+            <div class="credit-detail-grid">
+                <div class="credit-detail-card">
+                    <div class="credit-detail-label">Límite Total</div>
+                    <div class="credit-detail-value">${fmtMoney(info.limiteTotal)}</div>
+                </div>
+                <div class="credit-detail-card">
+                    <div class="credit-detail-label">Balance Actual</div>
+                    <div class="credit-detail-value" style="color:${info.balanceActual > 0 ? '#f87171' : '#4ade80'}">
+                        ${fmtMoney(info.balanceActual)}
+                    </div>
+                </div>
+                <div class="credit-detail-card">
+                    <div class="credit-detail-label">Disponible</div>
+                    <div class="credit-detail-value" style="color:#3b82f6">${fmtMoney(info.disponible)}</div>
+                </div>
+                <div class="credit-detail-card">
+                    <div class="credit-detail-label">Utilización</div>
+                    <div class="credit-detail-value" style="color:${utilColor}">${(info.pctUso*100).toFixed(2)}%</div>
+                    <div class="credit-detail-progress">
+                        <div class="credit-detail-progress-fill" style="width:${Math.min(pctNum,100)}%;background:${utilColor}"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="credit-detail-section">
+                <div class="credit-detail-section-title">📅 Ciclo de Facturación</div>
+                <div class="credit-detail-grid-3">
+                    <div class="credit-detail-item">
+                        <div class="credit-detail-item-label">Día de Corte</div>
+                        <div class="credit-detail-item-value">${info.diaCorte || '—'}</div>
+                    </div>
+                    <div class="credit-detail-item">
+                        <div class="credit-detail-item-label">Fecha Corte</div>
+                        <div class="credit-detail-item-value">${info.fechaCorte || '—'}</div>
+                    </div>
+                    <div class="credit-detail-item">
+                        <div class="credit-detail-item-label">Días de Gracia</div>
+                        <div class="credit-detail-item-value">${info.diasGracia || '—'}</div>
+                    </div>
+                    <div class="credit-detail-item">
+                        <div class="credit-detail-item-label">Fecha de Pago</div>
+                        <div class="credit-detail-item-value" style="color:${isOverdue || isClose ? statusColor : ''}">
+                            ${info.fechaPago || '—'}
+                        </div>
+                    </div>
+                    <div class="credit-detail-item">
+                        <div class="credit-detail-item-label">Días para Pagar</div>
+                        <div class="credit-detail-item-value" style="color:${isOverdue ? '#ef4444' : isClose ? '#f59e0b' : '#4ade80'};font-weight:700">
+                            ${info.diasFaltaPago !== '' ? info.diasFaltaPago + ' días' : '—'}
+                        </div>
+                    </div>
+                    <div class="credit-detail-item">
+                        <div class="credit-detail-item-label">Pago Recomendado</div>
+                        <div class="credit-detail-item-value">${fmtMoney(info.pagoRecomendado)}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="credit-detail-section">
+                <div class="credit-detail-section-title">💰 Condiciones</div>
+                <div class="credit-detail-grid-3">
+                    <div class="credit-detail-item">
+                        <div class="credit-detail-item-label">Tasa Interés Anual</div>
+                        <div class="credit-detail-item-value">${info.tasaInteres || '—'}</div>
+                    </div>
+                    <div class="credit-detail-item">
+                        <div class="credit-detail-item-label">Cashback</div>
+                        <div class="credit-detail-item-value">${info.cashback || '—'}</div>
+                    </div>
+                    <div class="credit-detail-item">
+                        <div class="credit-detail-item-label">Puntos</div>
+                        <div class="credit-detail-item-value">${info.puntos || '—'}</div>
+                    </div>
+                    <div class="credit-detail-item">
+                        <div class="credit-detail-item-label">Límite Saludable (30%)</div>
+                        <div class="credit-detail-item-value">${fmtMoney(info.limiteSaludable)}</div>
+                    </div>
+                    <div class="credit-detail-item">
+                        <div class="credit-detail-item-label">Último Aumento</div>
+                        <div class="credit-detail-item-value">${info.ultimoAumento || '—'}</div>
+                    </div>
+                    <div class="credit-detail-item">
+                        <div class="credit-detail-item-label">Tasa USD</div>
+                        <div class="credit-detail-item-value">${info.dolar > 0 ? info.dolar.toFixed(2) : '—'}</div>
+                    </div>
+                </div>
+            </div>
+
+            ${info.notas ? `
+            <div class="credit-detail-section">
+                <div class="credit-detail-section-title">📝 Notas</div>
+                <div class="credit-detail-notas">${info.notas}</div>
+            </div>
+            ` : ''}
+        `;
     }
 
     // Cerrar modal al hacer click fuera
@@ -327,9 +473,9 @@ function loadDataJSONP() {
         const callbackName = 'bsCallback_' + Date.now();
         const script = document.createElement('script');
         const timeout = setTimeout(() => {
-            reject(new Error('Timeout JSONP después de 15s'));
+            reject(new Error('Timeout JSONP después de 30s'));
             cleanup();
-        }, 15000);
+        }, 30000);
 
         function cleanup() {
             if (script.parentNode) script.parentNode.removeChild(script);
@@ -617,9 +763,18 @@ function loadDataJSONP() {
     const tarjetas = [], lineas = [], prestamos = [];
 
     // 1. Tarjetas que SÍ llegan del backend
-    for (const [name, data] of Object.entries(appData.creditos || {})) {
-        if (TARJETAS_NOMBRES.includes(name)) tarjetas.push({ name, data });
+    for (const name of TARJETAS_NOMBRES) {
+        const data = appData.creditos?.[name];
+        if (data) {
+            tarjetas.push({ name, data });
+        } else {
+            tarjetas.push({ 
+                name, 
+                data: { current: 0, previous: 0, change: 0, changePct: 0, history: [] } 
+            });
+        }
     }
+
 
     // 2. Líneas: buscar en backend, si no están crear con current=0
     for (const name of LINEAS_NOMBRES) {
@@ -696,7 +851,7 @@ function loadDataJSONP() {
             const util = getUtilizacion(name, data);
             const color = util > 90 ? '#ef4444' : util > 70 ? '#f59e0b' : '#22c55e';
             return `
-                <div class="liability-item">
+                <div class="liability-item" onclick="openCreditModal('${name}')" style="cursor:pointer">
                     <div class="liability-icon-wrap" style="background:${color}20;color:${color}">💳</div>
                     <div class="liability-info">
                         <div class="liability-name">${name}</div>
@@ -731,7 +886,7 @@ function loadDataJSONP() {
             const util = getUtilizacion(name, data);
             const color = util > 90 ? '#ef4444' : util > 70 ? '#f59e0b' : '#22c55e';
             return `
-                <div class="liability-item">
+                <div class="liability-item" onclick="openCreditModal('${name}')" style="cursor:pointer">
                     <div class="liability-icon-wrap" style="background:${color}20;color:${color}">📈</div>
                     <div class="liability-info">
                         <div class="liability-name">${name}</div>
@@ -762,7 +917,7 @@ function loadDataJSONP() {
         .map(({name, data}) => {
             const deuda = getDeuda(data);
             return `
-                <div class="liability-item">
+                <div class="liability-item" onclick="openCreditModal('${name}')" style="cursor:pointer">
                     <div class="liability-icon-wrap" style="background:#8b5cf620;color:#8b5cf6">🏦</div>
                     <div class="liability-info">
                         <div class="liability-name">${name}</div>

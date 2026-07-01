@@ -983,3 +983,143 @@
     .credit-detail-grid-3 { grid-template-columns: 1fr 1fr; }
     .credit-detail-value { font-size: 16px; }
 }
+/* ===== EXECUTIVE SUMMARY ===== */
+.executive-summary {
+    background: linear-gradient(135deg, rgba(30,41,59,0.8), rgba(15,23,42,0.9));
+    border: 1px solid rgba(51,65,85,0.4);
+    border-radius: 20px;
+    padding: 24px;
+    margin-bottom: 24px;
+    position: relative;
+    overflow: hidden;
+}
+.executive-summary::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #3b82f6, #8b5cf6, #22c55e);
+    border-radius: 20px 20px 0 0;
+}
+.summary-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.summary-header h2 {
+    font-size: 18px;
+    font-weight: 800;
+    color: #f8fafc;
+    letter-spacing: -0.02em;
+}
+.summary-date {
+    font-size: 12px;
+    color: #64748b;
+    font-weight: 500;
+    background: rgba(51,65,85,0.3);
+    padding: 4px 12px;
+    border-radius: 20px;
+}
+.summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+}
+.summary-card {
+    background: rgba(15,23,42,0.5);
+    border: 1px solid rgba(51,65,85,0.3);
+    border-radius: 16px;
+    padding: 20px;
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    transition: all 0.25s ease;
+    position: relative;
+    overflow: hidden;
+}
+.summary-card:hover {
+    transform: translateY(-3px);
+    border-color: rgba(71,85,105,0.5);
+    background: rgba(15,23,42,0.7);
+}
+.summary-card.primary {
+    background: linear-gradient(135deg, rgba(59,130,246,0.15), rgba(139,92,246,0.1));
+    border-color: rgba(59,130,246,0.3);
+}
+.summary-card.primary:hover {
+    border-color: rgba(59,130,246,0.5);
+    background: linear-gradient(135deg, rgba(59,130,246,0.2), rgba(139,92,246,0.15));
+}
+.summary-card.success {
+    background: linear-gradient(135deg, rgba(34,197,94,0.1), rgba(16,185,129,0.05));
+    border-color: rgba(34,197,94,0.25);
+}
+.summary-card.success:hover {
+    border-color: rgba(34,197,94,0.45);
+    background: linear-gradient(135deg, rgba(34,197,94,0.15), rgba(16,185,129,0.1));
+}
+.summary-card.warning {
+    background: linear-gradient(135deg, rgba(245,158,11,0.1), rgba(251,191,36,0.05));
+    border-color: rgba(245,158,11,0.25);
+}
+.summary-card.danger {
+    background: linear-gradient(135deg, rgba(239,68,68,0.1), rgba(248,113,113,0.05));
+    border-color: rgba(239,68,68,0.25);
+}
+.summary-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    background: rgba(51,65,85,0.3);
+    flex-shrink: 0;
+}
+.summary-card.primary .summary-icon { background: rgba(59,130,246,0.2); }
+.summary-card.success .summary-icon { background: rgba(34,197,94,0.2); }
+.summary-card.warning .summary-icon { background: rgba(245,158,11,0.2); }
+.summary-card.danger .summary-icon { background: rgba(239,68,68,0.2); }
+.summary-data { flex: 1; min-width: 0; }
+.summary-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #64748b;
+    margin-bottom: 6px;
+}
+.summary-value {
+    font-size: 22px;
+    font-weight: 800;
+    color: #f8fafc;
+    letter-spacing: -0.03em;
+    margin-bottom: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.summary-trend {
+    font-size: 12px;
+    font-weight: 600;
+    color: #94a3b8;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.summary-trend.positive { color: #4ade80; }
+.summary-trend.negative { color: #f87171; }
+.summary-trend.neutral { color: #94a3b8; }
+
+@media (max-width: 1024px) {
+    .summary-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 640px) {
+    .summary-grid { grid-template-columns: 1fr; }
+    .executive-summary { padding: 16px; }
+    .summary-value { font-size: 20px; }
+}

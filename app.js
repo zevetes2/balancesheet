@@ -19,15 +19,15 @@
     let assetDetailChart = null;
 
     const ASSET_COLORS = {
-        'Débito Banreservas': '#3b82f6', 'Cash': '#22c55e', 'Débito Popular': '#8b5cf6',
-        'Digital Banreservas': '#0ea5e9', 'Digital Popular': '#f59e0b', 'Digital BHD': '#ec4899',
-        'BDI: Ahorro': '#6366f1', 'QIK: Ahorro': '#14b8a6', 'Ademi: Ahorro': '#f97316',
-        'Cash US': '#84cc16', 'Airtm': '#06b6d4', 'Paypal USD': '#003087',
-        'Etoro': '#00d4aa', 'Hapi': '#ff6b35', 'Alpha View': '#7c3aed',
-        'UC United Capital': '#0ea5e9', 'Larimar': '#f59e0b', 'Cesar Iglesias': '#ec4899',
-        'SIVEMBC263': '#22c55e', 'Certificado Banreserva': '#3b82f6',
-        'Alcanza Inversiones': '#8b5cf6', 'Haina Investment 2034': '#ef4444',
-        'Fondo de Fondos Altio': '#14b8a6', 'TradeStation': '#6366f1'
+        'Débito Banreservas': '#0D47A1', 'Cash': '#0D47A1', 'Débito Popular': '#0D47A1',
+        'Digital Banreservas': '#4DB6AC', 'Digital Popular': '#4DB6AC', 'Digital BHD': '#4DB6AC',
+        'BDI: Ahorro': '#FBC02D', 'QIK: Ahorro': '#FBC02D', 'Ademi: Ahorro': '#4EA90A',
+        'Cash US': '#4EA90A', 'Airtm': '#4EA90A', 'Paypal USD': '#4EA90A',
+        'Etoro': '#FF6F00', 'Hapi': '#FF6F00', 'Alpha View': '#FF6F00',
+        'UC United Capital': '#FF6F00', 'Larimar': '#FF6F00', 'Cesar Iglesias': '#FF6F00',
+        'SIVEMBC263': '#FF6F00', 'Certificado Banreserva': '#FF6F00',
+        'Alcanza Inversiones': '#FF6F00', 'Haina Investment 2034': '#FF6F00',
+        'Fondo de Fondos Altio': '#FF6F00', 'TradeStation': '#FF6F00'
     };
 
 // === LÍMITES DE CRÉDITO (ajustar si el banco cambia los límites) ===
@@ -547,110 +547,168 @@ function loadDataJSONP() {
     }
 
     function renderOverview() {
-      const s = appData.summary;
-      const totalAssets = s.activosTotales.current;
-      const totalLiab = s.pasivosTotal.current;
-      const netWorth = s.patrimonioNeto.current;
-      const liquidity = s.liquidoTotal.current;
-      const investments = s.inversionesTotal.current;
-      
-      // === NUEVAS MÉTRICAS ===
-      const income = s.ingresosNetos.current;
-      const expenses = s.gastosTotal.current;
-      const savingsRate = income > 0 ? ((income - expenses) / income) * 100 : 0;
-      const savingsAmount = income - expenses;
-      
-      // Score de salud financiera (0-100)
-      const debtRatio = totalAssets > 0 ? (totalLiab / totalAssets) * 100 : 0;
-      const liquidityRatio = totalLiab > 0 ? (liquidity / totalLiab) : 0;
-      const investmentRatio = totalAssets > 0 ? (investments / totalAssets) * 100 : 0;
-      const healthScore = Math.min(100, Math.round(
-          (debtRatio < 20 ? 25 : debtRatio < 50 ? 15 : 5) +
-          (liquidityRatio > 1 ? 25 : liquidityRatio > 0.5 ? 15 : 5) +
-          (investmentRatio > 30 ? 25 : investmentRatio > 15 ? 15 : 5) +
-          (savingsRate > 10 ? 25 : savingsRate > 0 ? 15 : 5)
-      ));
-      
-      // Tendencia 12M
-      const patrimonioHistory = s.patrimonioNeto.history;
-      const val12mAgo = patrimonioHistory.length > 12 ? patrimonioHistory[patrimonioHistory.length - 13].value : patrimonioHistory[0].value;
-      const trend12m = ((netWorth - val12mAgo) / Math.abs(val12mAgo)) * 100;
-      
-      const html = `
-          <div class="stat-card">
-              <div class="stat-header">
-                  <span class="stat-label">Patrimonio Neto</span>
-                  ${getChangeBadge(s.patrimonioNeto.changePct)}
-              </div>
-              <div class="stat-value">${fmtMoney(netWorth)}</div>
-              <div class="stat-sub">vs mes anterior: <span class="highlight">${fmtMoney(s.patrimonioNeto.change)}</span></div>
-          </div>
-          <div class="stat-card">
-              <div class="stat-header">
-                  <span class="stat-label">Tasa de Ahorro</span>
-                  <span class="stat-badge ${savingsRate >= 10 ? 'up' : savingsRate > 0 ? 'neutral' : 'down'}">${savingsRate.toFixed(1)}%</span>
-              </div>
-              <div class="stat-value" style="color:${savingsRate >= 10 ? '#4ade80' : savingsRate > 0 ? '#94a3b8' : '#f87171'}">${savingsRate.toFixed(1)}%</div>
-              <div class="stat-sub">Ahorro: <span class="highlight">${fmtMoney(savingsAmount)}</span> / Ingreso: ${fmtMoney(income)}</div>
-          </div>
-          <div class="stat-card">
-              <div class="stat-header">
-                  <span class="stat-label">Score Salud Financiera</span>
-                  <span class="stat-badge ${healthScore >= 70 ? 'up' : healthScore >= 40 ? 'neutral' : 'down'}">${healthScore}/100</span>
-              </div>
-              <div class="stat-value" style="color:${healthScore >= 70 ? '#4ade80' : healthScore >= 40 ? '#f59e0b' : '#f87171'}">${healthScore}</div>
-              <div class="stat-sub">Deuda: ${debtRatio.toFixed(1)}% · Liquidez: ${liquidityRatio.toFixed(1)}x · Inv: ${investmentRatio.toFixed(1)}%</div>
-          </div>
-          <div class="stat-card">
-              <div class="stat-header">
-                  <span class="stat-label">Tendencia 12M</span>
-                  ${getChangeBadge(trend12m)}
-              </div>
-              <div class="stat-value">${fmtPct(trend12m)}</div>
-              <div class="stat-sub">Hace 12M: ${fmtMoney(val12mAgo)} · Ahora: ${fmtMoney(netWorth)}</div>
-          </div>
-      `;  
-      document.getElementById('overviewStats').innerHTML = html;
+        const s = appData.summary;
+        const totalAssets = s.activosTotales.current;
+        const totalLiab = s.pasivosTotal.current;
+        const netWorth = s.patrimonioNeto.current;
+        const liquidity = s.liquidoTotal.current;
+        const investments = s.inversionesTotal.current;
+        
+        const income = s.ingresosNetos.current;
+        const expenses = s.gastosTotal.current;
+        const savingsRate = income > 0 ? ((income - expenses) / income) * 100 : 0;
+        const savingsAmount = income - expenses;
+        
+        const debtRatio = totalAssets > 0 ? (totalLiab / totalAssets) * 100 : 0;
+        const liquidityRatio = totalLiab > 0 ? (liquidity / totalLiab) : 0;
+        const investmentRatio = totalAssets > 0 ? (investments / totalAssets) * 100 : 0;
+        const healthScore = Math.min(100, Math.round(
+            (debtRatio < 20 ? 25 : debtRatio < 50 ? 15 : 5) +
+            (liquidityRatio > 1 ? 25 : liquidityRatio > 0.5 ? 15 : 5) +
+            (investmentRatio > 30 ? 25 : investmentRatio > 15 ? 15 : 5) +
+            (savingsRate > 10 ? 25 : savingsRate > 0 ? 15 : 5)
+        ));
+        
+        const patrimonioHistory = s.patrimonioNeto.history;
+        const val12mAgo = patrimonioHistory.length > 12 ? patrimonioHistory[patrimonioHistory.length - 13].value : patrimonioHistory[0].value;
+        const trend12m = ((netWorth - val12mAgo) / Math.abs(val12mAgo)) * 100;
+        
+        // === EXECUTIVE SUMMARY ===
+        const now = new Date();
+        const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+        document.getElementById('summaryDate').textContent = `Al ${now.getDate()} de ${meses[now.getMonth()]}, ${now.getFullYear()}`;
+        
+        const activosHistory = s.activosTotales.history;
+        const pasivosHistory = s.pasivosTotal.history;
+        const val12mActivos = activosHistory.length > 12 ? activosHistory[activosHistory.length - 13].value : activosHistory[0].value;
+        const val12mPasivos = pasivosHistory.length > 12 ? pasivosHistory[pasivosHistory.length - 13].value : pasivosHistory[0].value;
+        const yoyActivos = val12mActivos !== 0 ? ((totalAssets - val12mActivos) / Math.abs(val12mActivos)) * 100 : 0;
+        const yoyPasivos = val12mPasivos !== 0 ? ((totalLiab - val12mPasivos) / Math.abs(val12mPasivos)) * 100 : 0;
+        
+        let healthStatus = 'Excelente';
+        let healthCardClass = 'success';
+        if (healthScore < 40) { healthStatus = 'Crítico'; healthCardClass = 'danger'; }
+        else if (healthScore < 60) { healthStatus = 'Atención'; healthCardClass = 'warning'; }
+        else if (healthScore < 80) { healthStatus = 'Bueno'; healthCardClass = ''; }
+        
+        const summaryHtml = `
+            <div class="summary-card primary">
+                <div class="summary-icon">💰</div>
+                <div class="summary-data">
+                    <div class="summary-label">Patrimonio Neto</div>
+                    <div class="summary-value">${fmtMoney(netWorth)}</div>
+                    <div class="summary-trend ${s.patrimonioNeto.changePct >= 0 ? 'positive' : 'negative'}">
+                        ${s.patrimonioNeto.changePct >= 0 ? '▲' : '▼'} ${Math.abs(s.patrimonioNeto.changePct).toFixed(1)}% vs mes anterior
+                    </div>
+                </div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-icon">📈</div>
+                <div class="summary-data">
+                    <div class="summary-label">Activos Totales</div>
+                    <div class="summary-value">${fmtMoney(totalAssets)}</div>
+                    <div class="summary-trend ${yoyActivos >= 0 ? 'positive' : 'negative'}">
+                        ${yoyActivos >= 0 ? '▲' : '▼'} ${Math.abs(yoyActivos).toFixed(1)}% YoY
+                    </div>
+                </div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-icon">📉</div>
+                <div class="summary-data">
+                    <div class="summary-label">Pasivos Totales</div>
+                    <div class="summary-value">${fmtMoney(totalLiab)}</div>
+                    <div class="summary-trend ${yoyPasivos <= 0 ? 'positive' : 'negative'}">
+                        ${yoyPasivos <= 0 ? '▼' : '▲'} ${Math.abs(yoyPasivos).toFixed(1)}% YoY
+                    </div>
+                </div>
+            </div>
+            <div class="summary-card ${healthCardClass}">
+                <div class="summary-icon">💪</div>
+                <div class="summary-data">
+                    <div class="summary-label">Índice de Salud</div>
+                    <div class="summary-value">${healthScore}%</div>
+                    <div class="summary-trend ${healthScore >= 80 ? 'positive' : healthScore >= 60 ? 'neutral' : 'negative'}">${healthStatus}</div>
+                </div>
+            </div>
+        `;
+        document.getElementById('summaryGrid').innerHTML = summaryHtml;
 
-      // === PODER ADQUISITIVO TOTAL ===
-      // Límite total de crédito desde el último mes con datos
-      const CREDIT_LIMIT_TOTAL = getCreditLimitTotal();
-      const activosDisponibles = liquidity + investments;
-      const creditoDisponible = Math.max(0, CREDIT_LIMIT_TOTAL - getDeudaRotativa());
-      const poderAdquisitivo = activosDisponibles + creditoDisponible;
+        // === PODER ADQUISITIVO TOTAL ===
+        const CREDIT_LIMIT_TOTAL = getCreditLimitTotal();
+        const activosDisponibles = liquidity + investments;
+        const creditoDisponible = Math.max(0, CREDIT_LIMIT_TOTAL - getDeudaRotativa());
+        const poderAdquisitivo = activosDisponibles + creditoDisponible;
 
-      const pctActivos = poderAdquisitivo > 0 ? (activosDisponibles / poderAdquisitivo) * 100 : 0;
-      const pctCredito = poderAdquisitivo > 0 ? (creditoDisponible / poderAdquisitivo) * 100 : 0;
-      const pctTotal = poderAdquisitivo > 0 ? 100 : 0;
+        const pctActivos = poderAdquisitivo > 0 ? (activosDisponibles / poderAdquisitivo) * 100 : 0;
+        const pctCredito = poderAdquisitivo > 0 ? (creditoDisponible / poderAdquisitivo) * 100 : 0;
+        const pctTotal = poderAdquisitivo > 0 ? 100 : 0;
 
-      const poderHtml = `
-          <div class="stat-card info" style="--bar-width: ${pctActivos.toFixed(1)}%">
-              <div class="stat-header">
-                  <span class="stat-label">Activos Disponibles</span>
-              </div>
-              <div class="stat-value">${fmtMoney(activosDisponibles)}</div>
-              <div class="stat-sub">Líquido + Inversiones</div>
-              <div class="stat-bar"></div>
-          </div>
-          <div class="stat-card warning" style="--bar-width: ${pctCredito.toFixed(1)}%">
-              <div class="stat-header">
-                  <span class="stat-label">+ Crédito Disponible</span>
-              </div>
-              <div class="stat-value">${fmtMoney(creditoDisponible)}</div>
-              <div class="stat-sub">de ${fmtMoney(CREDIT_LIMIT_TOTAL)} límite total</div>
-              <div class="stat-bar"></div>
-          </div>
-          <div class="stat-card success" style="--bar-width: ${pctTotal.toFixed(1)}%">
-              <div class="stat-header">
-                  <span class="stat-label">= Poder Adquisitivo Total</span>
-              </div>
-              <div class="stat-value">${fmtMoney(poderAdquisitivo)}</div>
-              <div class="stat-sub">Activos + Líneas de crédito</div>
-              <div class="stat-bar"></div>
-          </div>
-      `;
-      document.getElementById('poderAdquisitivoStats').innerHTML = poderHtml;
+        const poderHtml = `
+            <div class="stat-card info" style="--bar-width: ${pctActivos.toFixed(1)}%">
+                <div class="stat-header">
+                    <span class="stat-label">Activos Disponibles</span>
+                </div>
+                <div class="stat-value">${fmtMoney(activosDisponibles)}</div>
+                <div class="stat-sub">Líquido + Inversiones</div>
+                <div class="stat-bar"></div>
+            </div>
+            <div class="stat-card warning" style="--bar-width: ${pctCredito.toFixed(1)}%">
+                <div class="stat-header">
+                    <span class="stat-label">+ Crédito Disponible</span>
+                </div>
+                <div class="stat-value">${fmtMoney(creditoDisponible)}</div>
+                <div class="stat-sub">de ${fmtMoney(CREDIT_LIMIT_TOTAL)} límite total</div>
+                <div class="stat-bar"></div>
+            </div>
+            <div class="stat-card success" style="--bar-width: ${pctTotal.toFixed(1)}%">
+                <div class="stat-header">
+                    <span class="stat-label">= Poder Adquisitivo Total</span>
+                </div>
+                <div class="stat-value">${fmtMoney(poderAdquisitivo)}</div>
+                <div class="stat-sub">Activos + Líneas de crédito</div>
+                <div class="stat-bar"></div>
+            </div>
+        `;
+        document.getElementById('poderAdquisitivoStats').innerHTML = poderHtml;
+
+        // === STAT CARDS ORIGINALES (debajo del executive summary) ===
+        const html = `
+            <div class="stat-card">
+                <div class="stat-header">
+                    <span class="stat-label">Tasa de Ahorro</span>
+                    <span class="stat-badge ${savingsRate >= 10 ? 'up' : savingsRate > 0 ? 'neutral' : 'down'}">${savingsRate.toFixed(1)}%</span>
+                </div>
+                <div class="stat-value" style="color:${savingsRate >= 10 ? '#4ade80' : savingsRate > 0 ? '#94a3b8' : '#f87171'}">${savingsRate.toFixed(1)}%</div>
+                <div class="stat-sub">Ahorro: <span class="highlight">${fmtMoney(savingsAmount)}</span> / Ingreso: ${fmtMoney(income)}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-header">
+                    <span class="stat-label">Score Salud Financiera</span>
+                    <span class="stat-badge ${healthScore >= 70 ? 'up' : healthScore >= 40 ? 'neutral' : 'down'}">${healthScore}/100</span>
+                </div>
+                <div class="stat-value" style="color:${healthScore >= 70 ? '#4ade80' : healthScore >= 40 ? '#f59e0b' : '#f87171'}">${healthScore}</div>
+                <div class="stat-sub">Deuda: ${debtRatio.toFixed(1)}% · Liquidez: ${liquidityRatio.toFixed(1)}x · Inv: ${investmentRatio.toFixed(1)}%</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-header">
+                    <span class="stat-label">Tendencia 12M</span>
+                    ${getChangeBadge(trend12m)}
+                </div>
+                <div class="stat-value">${fmtPct(trend12m)}</div>
+                <div class="stat-sub">Hace 12M: ${fmtMoney(val12mAgo)} · Ahora: ${fmtMoney(netWorth)}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-header">
+                    <span class="stat-label">Ratio Deuda/Activos</span>
+                </div>
+                <div class="stat-value" style="color:${debtRatio < 30 ? '#4ade80' : debtRatio < 50 ? '#f59e0b' : '#f87171'}">${debtRatio.toFixed(1)}%</div>
+                <div class="stat-sub">${debtRatio < 30 ? '✅ Saludable' : debtRatio < 50 ? '⚠️ Moderado' : '🔴 Alto'} (&lt;30% ideal)</div>
+            </div>
+        `;
+        document.getElementById('overviewStats').innerHTML = html;
     }
+
+
     function formatDateToString(dateValue) {
       if (!dateValue) return '';
       if (dateValue instanceof Date) {

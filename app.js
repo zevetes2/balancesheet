@@ -30,6 +30,40 @@
         'Fondo de Fondos Altio': '#FF6F00', 'TradeStation': '#FF6F00'
     };
 
+
+function fmtDate(dateStr) {
+    if (!dateStr || dateStr === '—') return '—';
+    
+    // Si ya viene formateada como DD/MM/YYYY
+    if (typeof dateStr === 'string' && dateStr.includes('/')) {
+        const parts = dateStr.split('/');
+        if (parts.length === 3) {
+            const d = parseInt(parts[0], 10);
+            const m = parseInt(parts[1], 10);
+            const y = parts[2];
+            const meses = ['enero','febrero','marzo','abril','mayo','junio',
+                           'julio','agosto','septiembre','octubre','noviembre','diciembre'];
+            if (m >= 1 && m <= 12) {
+                return `${d} de ${meses[m-1]}, ${y}`;
+            }
+        }
+    }
+    
+    // Fallback por si llega en otro formato
+    try {
+        const d = new Date(dateStr);
+        if (!isNaN(d.getTime())) {
+            const meses = ['enero','febrero','marzo','abril','mayo','junio',
+                           'julio','agosto','septiembre','octubre','noviembre','diciembre'];
+            return `${d.getDate()} de ${meses[d.getMonth()]}, ${d.getFullYear()}`;
+        }
+    } catch (e) {}
+    
+    return dateStr;
+}
+
+
+
 // === LÍMITES DE CRÉDITO (ajustar si el banco cambia los límites) ===
 // NOTA: Los valores USD asumen que la hoja ya convierte a DOP.
 // Si la hoja guarda USD crudos, multiplicar por la tasa de cambio aquí.
@@ -207,8 +241,8 @@ function getDeudaRotativa() {
                         <div class="credit-detail-item-value">${info.diaCorte || '—'}</div>
                     </div>
                     <div class="credit-detail-item">
-                        <div class="credit-detail-item-label">Fecha Corte</div>
-                        <div class="credit-detail-item-value">${info.fechaCorte || '—'}</div>
+                        <div class="credit-detail-item-label">Fecha de Corte</div>
+                        <div class="credit-detail-item-value">${fmtDate(info.fechaCorte)}</div>
                     </div>
                     <div class="credit-detail-item">
                         <div class="credit-detail-item-label">Días de Gracia</div>
@@ -217,7 +251,7 @@ function getDeudaRotativa() {
                     <div class="credit-detail-item">
                         <div class="credit-detail-item-label">Fecha de Pago</div>
                         <div class="credit-detail-item-value" style="color:${isOverdue || isClose ? statusColor : ''}">
-                            ${info.fechaPago || '—'}
+                            ${fmtDate(info.fechaPago) || '—'}
                         </div>
                     </div>
                     <div class="credit-detail-item">
@@ -710,12 +744,17 @@ function loadDataJSONP() {
 
 
     function formatDateToString(dateValue) {
-      if (!dateValue) return '';
-      if (dateValue instanceof Date) {
-          return (dateValue.getMonth() + 1) + '/1/' + dateValue.getFullYear();
-      }
-      return dateValue.toString();
-    }
+        if (!dateValue) return '';
+        if (dateValue instanceof Date) {
+            const d = dateValue.getDate();           // día real (1-31)
+            const m = dateValue.getMonth() + 1;      // mes (1-12)
+            const y = dateValue.getFullYear();       // año completo
+            // Formato: DD/MM/YYYY (o el que prefieras)
+            return String(d).padStart(2, '0') + '/' + String(m).padStart(2, '0') + '/' + y;
+        }
+        // Si es texto en Sheets, devolverlo limpio
+        return dateValue.toString().trim();
+        }
 
     // === RENDER ASSETS ===
     function renderAssets() {

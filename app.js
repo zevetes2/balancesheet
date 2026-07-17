@@ -2766,28 +2766,28 @@ const CAT_DB = {
 
 // Colores por Etiqueta Principal (categoría raíz visual)
 const ETIQUETA_COLORS = {
-  'Comida': '#ef4444',
-  'Compras': '#f97316',
-  'Transporte': '#f59e0b',
-  'Servicios': '#0ea5e9',
-  'Gastos financieros': '#8b5cf6',
-  'Otros': '#64748b',
-  'Donativos': '#ec4899',
-  'Educacion': '#3b82f6',
-  'Entretenimiento': '#d946ef',
-  'Ahorros': '#22c55e',
-  'Inversión': '#14b8a6',
-  'Trabajo': '#6366f1',
-  'Clases de Música': '#a855f7',
-  'Eventos': '#f43f5e',
-  'Iglesias': '#eab308',
-  'Developer': '#06b6d4',
-  'Cheques, cupones': '#84cc16',
-  'Regalos': '#f97316',
-  'Puntos': '#10b981',
-  'Intereses, dividendos': '#22d3ee',
-  'Investment': '#f59e0b',
-  'Otros Ingresos': '#94a3b8'
+  'Comida': '#f44336',
+  'Compras': '#4fc3f7',
+  'Transporte': '#78909c',
+  'Servicios': '#536dfe',
+  'Gastos financieros': '#00bfa5',
+  'Otros': '#ff9900',
+  'Donativos': '#ec407a',
+  'Educacion': '#2e7d32',
+  'Entretenimiento': '#4db6ac',
+  'Ahorros': '#64dd17',
+  'Inversión': '#ff1744',
+  'Trabajo': '#fbc02d',
+  'Clases de Música': '#fbc02d',
+  'Eventos': '#fbc02d',
+  'Iglesias': '#fbc02d8',
+  'Developer': '#fbc02d',
+  'Cheques, cupones': '#fbc02d',
+  'Regalos': '#fbc02d',
+  'Puntos': '#fbc02d',
+  'Intereses, dividendos': '#fbc02d',
+  'Investment': '#fbc02d',
+  'Otros Ingresos': '#fbc02d'
 };
 
 function getCatMeta(nombre) {
@@ -2801,7 +2801,10 @@ function getEtiquetaColor(etiqueta) {
 // === HELPERS DE FILTRADO ===
 function filterCatsByTipo(catsEntries, tipo) {
   if (tipo === 'todos') return catsEntries;
-  return catsEntries.filter(([name, data]) => getCatMeta(name).tipo === tipo);
+  return catsEntries.filter(([name, data]) => {
+    const catTipo = (getCatMeta(name).tipo || '').toLowerCase();
+    return catTipo === tipo;
+  });
 }
 
 function getTipoLabel(t) {
@@ -3013,6 +3016,14 @@ function renderDBGastosTopCurrentChart() {
   document.getElementById('dbGastosTopCurrentSub').textContent =
     (gastosData.resumen.mesActual?.mes || '') + ' · Categorías Principales';
 
+  // Ajustar altura según cantidad de items y si es mobile
+  const isMobile = window.innerWidth <= 640;
+  const chartHeight = isMobile ? Math.max(320, topGastos.length * 32) : 300;
+  const chartContainer = document.getElementById('dbGastosTopCurrentChart');
+  if (chartContainer) {
+    chartContainer.style.height = chartHeight + 'px';
+  }
+
   new Chart(ctx, {
     type: 'bar',
     data: {
@@ -3025,13 +3036,22 @@ function renderDBGastosTopCurrentChart() {
           return getEtiquetaColor(meta.etiqueta);
         }),
         borderRadius: 6,
-        barPercentage: 0.65
+        barPercentage: 0.7,
+        categoryPercentage: 0.8
       }]
     },
     options: {
       indexAxis: 'y',
       responsive: true,
       maintainAspectRatio: false,
+      layout: {
+        padding: {
+          left: 0,
+          right: isMobile ? 60 : 80, // espacio para el valor al final de la barra
+          top: 10,
+          bottom: 10
+        }
+      },
       plugins: {
         legend: { display: false },
         tooltip: {
@@ -3044,12 +3064,38 @@ function renderDBGastosTopCurrentChart() {
         }
       },
       scales: {
-        x: { grid: { color: 'rgba(51,65,85,0.2)' }, ticks: { color: '#64748b', font: { size: 10 }, callback: (v) => 'RD$' + (v/1000).toFixed(0) + 'K' } },
-        y: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 11 } } }
+        x: {
+          grid: { color: 'rgba(51,65,85,0.2)' },
+          ticks: {
+            color: '#64748b',
+            font: { size: isMobile ? 9 : 10 },
+            callback: (v) => 'RD$' + (v/1000).toFixed(0) + 'K',
+            maxRotation: 0
+          },
+          border: { display: false }
+        },
+        y: {
+          grid: { display: false },
+          ticks: {
+            color: '#94a3b8',
+            font: { size: isMobile ? 11 : 12, weight: '600' },
+            // Truncar labels largos en mobile
+            callback: function(value, index, values) {
+              const label = this.getLabelForValue(value);
+              if (!label) return '';
+              if (isMobile && label.length > 14) {
+                return label.substring(0, 12) + '…';
+              }
+              return label;
+            }
+          },
+          border: { display: false }
+        }
       }
     }
   });
 }
+
 
 // ============================================================================
 // DB_GASTOS — LISTA COMPLETA CON TODAS LAS SUBCATEGORÍAS

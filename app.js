@@ -1673,7 +1673,10 @@ function renderRatiosRadarChart() {
                 console.error('Error renderizando radar chart:', e);
             }
         }, 100);
+    } else if (tab === 'db-gastos') {
+        renderDBGastosTab();
     }
+
   }
 
   function formatShortDate(dateStr) {
@@ -2512,3 +2515,814 @@ function renderRatiosRadarChart() {
     for (const name of LINEAS_NOMBRES)   total += getCreditLimit(name);
     return total;
 }
+
+// ============================================================================
+// DB_GASTOS — TAB DE GASTOS/INGRESOS DETALLADOS POR CATEGORÍA (con jerarquía)
+// Backend V2: solo suma categorías principales (nivel 1)
+// ============================================================================
+
+let gastosData = null;
+let gastoDetailChart = null;
+let dbGastosFilter = 'gastos'; // 'gastos' | 'ingresos' | 'todos'
+
+// === MAPA DE CATEGORÍAS (desde DB_CATEGORIAS) ===
+const CAT_DB = {
+  'AFI Reservas +': {padre:'Inversiones',etiqueta:'Investment',tipo:'Ingresos',nivel:2,esHoja:true},
+  'Abuela': {padre:'Familia',etiqueta:'Donativos',tipo:'Gastos',nivel:3,esHoja:true},
+  'Accesorios': {padre:'Ropa y calzado',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Accesorios (cargadores, auriculares)': {padre:'Tecnología y electrónica',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Accesorios de Viaje': {padre:'Viajes y ocio',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Acciones': {padre:'Inversiones financieras',etiqueta:'Inversión',tipo:'Gastos',nivel:3,esHoja:true},
+  'Actividades al aire libre': {padre:'Entretenimiento',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:2,esHoja:false},
+  'Actividades de ocio': {padre:'Entretenimiento',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:2,esHoja:true},
+  'Actividades extracurriculares': {padre:'Educacion',etiqueta:'Educacion',tipo:'Gastos',nivel:2,esHoja:false},
+  'Ahorro a corto plazo': {padre:'Ahorros',etiqueta:'Ahorros',tipo:'Gastos',nivel:2,esHoja:true},
+  'Ahorro a largo plazo': {padre:'Ahorros',etiqueta:'Ahorros',tipo:'Gastos',nivel:2,esHoja:true},
+  'Ahorro para eventos': {padre:'Ahorros',etiqueta:'Ahorros',tipo:'Gastos',nivel:2,esHoja:true},
+  'Ahorro para grandes compras': {padre:'Ahorros',etiqueta:'Ahorros',tipo:'Gastos',nivel:2,esHoja:true},
+  'Ahorros': {padre:'',etiqueta:'Ahorros',tipo:'Gastos',nivel:1,esHoja:false},
+  'Alpha +': {padre:'Inversiones',etiqueta:'Investment',tipo:'Ingresos',nivel:2,esHoja:true},
+  'Alquiler de renta': {padre:'Hogar servicios',etiqueta:'Servicios',tipo:'Gastos',nivel:3,esHoja:true},
+  'Amigos': {padre:'Donativos',etiqueta:'Donativos',tipo:'Gastos',nivel:2,esHoja:true},
+  'Aporte': {padre:'Iglesia',etiqueta:'Donativos',tipo:'Gastos',nivel:3,esHoja:true},
+  'Articulo de oficina': {padre:'Otras compras',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Articulo para eventos': {padre:'Otras compras',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Ayuda': {padre:'Donativos',etiqueta:'Donativos',tipo:'Gastos',nivel:2,esHoja:false},
+  'Ayuda Individual': {padre:'Ayuda',etiqueta:'Donativos',tipo:'Gastos',nivel:3,esHoja:true},
+  'Bancos +': {padre:'Inversiones',etiqueta:'Investment',tipo:'Ingresos',nivel:2,esHoja:true},
+  'Bebidas': {padre:'Snacks y antojos',etiqueta:'Comida',tipo:'Gastos',nivel:3,esHoja:true},
+  'Belleza': {padre:'Compras',etiqueta:'Compras',tipo:'Gastos',nivel:2,esHoja:false},
+  'Blanco y textiles': {padre:'Hogar',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Bodas': {padre:'Eventos',etiqueta:'Eventos',tipo:'Ingresos',nivel:2,esHoja:true},
+  'Boliche': {padre:'Actividades al aire libre',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:3,esHoja:true},
+  'Bonos': {padre:'Inversiones financieras',etiqueta:'Inversión',tipo:'Gastos',nivel:3,esHoja:true},
+  'Calzado': {padre:'Ropa y calzado',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Carnes y pescados': {padre:'Supermercado',etiqueta:'Comida',tipo:'Gastos',nivel:3,esHoja:true},
+  'Casa Raquel RD': {padre:'Trabajo',etiqueta:'Trabajo',tipo:'Ingresos',nivel:2,esHoja:true},
+  'Casa Raquel RD -': {padre:'Otroo',etiqueta:'Otros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Cereales y granos': {padre:'Supermercado',etiqueta:'Comida',tipo:'Gastos',nivel:3,esHoja:true},
+  'Certificaciones y diplomados': {padre:'Cursos y talleres',etiqueta:'Educacion',tipo:'Gastos',nivel:3,esHoja:true},
+  'Certificado Banreserva +': {padre:'Inversiones',etiqueta:'Investment',tipo:'Ingresos',nivel:2,esHoja:true},
+  'Cesar Iglesias +': {padre:'Inversiones',etiqueta:'Investment',tipo:'Ingresos',nivel:2,esHoja:true},
+  'Cheques, cupones': {padre:'',etiqueta:'Cheques, cupones',tipo:'Ingresos',nivel:1,esHoja:true},
+  'Cine': {padre:'Entretenimiento',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:2,esHoja:true},
+  'Clases de Música': {padre:'',etiqueta:'Clases de Música',tipo:'Ingresos',nivel:1,esHoja:false},
+  'Clases de música, danza o arte': {padre:'Mon Amour',etiqueta:'Educacion',tipo:'Gastos',nivel:3,esHoja:true},
+  'Clases recreativas': {padre:'Hobbies y pasatiempos',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:3,esHoja:true},
+  'Cocina y mesa': {padre:'Hogar',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Colmado': {padre:'Comida fuera',etiqueta:'Comida',tipo:'Gastos',nivel:3,esHoja:true},
+  'Comida': {padre:'',etiqueta:'Comida',tipo:'Gastos',nivel:1,esHoja:false},
+  'Comida casual (cafes, bistros, etc)': {padre:'Comida fuera',etiqueta:'Comida',tipo:'Gastos',nivel:3,esHoja:true},
+  'Comida especial': {padre:'Entretenimiento',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:2,esHoja:true},
+  'Comida fuera': {padre:'Comida',etiqueta:'Comida',tipo:'Gastos',nivel:2,esHoja:false},
+  'Comida para llevar': {padre:'Comida fuera',etiqueta:'Comida',tipo:'Gastos',nivel:3,esHoja:true},
+  'Comida rápida': {padre:'Comida fuera',etiqueta:'Comida',tipo:'Gastos',nivel:3,esHoja:true},
+  'Comisiones': {padre:'Otroo',etiqueta:'Otros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Comisiones bancarias': {padre:'Gastos financieros',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:2,esHoja:false},
+  'Comisiones de corretaje': {padre:'Inversiones financiera',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Componentes (memorias, disco duros)': {padre:'Tecnología y electrónica',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Compras': {padre:'',etiqueta:'Compras',tipo:'Gastos',nivel:1,esHoja:false},
+  'Compras especiales': {padre:'Compras',etiqueta:'Compras',tipo:'Gastos',nivel:2,esHoja:true},
+  'Compras mensuales': {padre:'Compras',etiqueta:'Compras',tipo:'Gastos',nivel:2,esHoja:true},
+  'Concho': {padre:'Transporte público',etiqueta:'Transporte',tipo:'Gastos',nivel:3,esHoja:true},
+  'Conciertos': {padre:'Entretenimiento',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:2,esHoja:true},
+  'Cruceros': {padre:'Viajes de entretenimiento',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:3,esHoja:true},
+  'Cryptomonedas': {padre:'Inversiones financieras',etiqueta:'Inversión',tipo:'Gastos',nivel:3,esHoja:true},
+  'Cuadernos y papelería': {padre:'Materiales educativos',etiqueta:'Educacion',tipo:'Gastos',nivel:3,esHoja:true},
+  'Cumpleaños': {padre:'Entretenimiento',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:2,esHoja:true},
+  'Cuotas de tarjetas de crédito': {padre:'Deudas y créditos',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Cursos': {padre:'Matrícula y colegiaturas',etiqueta:'Educacion',tipo:'Gastos',nivel:3,esHoja:true},
+  'Cursos en línea': {padre:'Cursos y talleres',etiqueta:'Educacion',tipo:'Gastos',nivel:3,esHoja:true},
+  'Cursos presenciales': {padre:'Cursos y talleres',etiqueta:'Educacion',tipo:'Gastos',nivel:3,esHoja:true},
+  'Cursos y talleres': {padre:'Educacion',etiqueta:'Educacion',tipo:'Gastos',nivel:2,esHoja:false},
+  'Decoracion': {padre:'Hogar',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Deudas y créditos': {padre:'Gastos financieros',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:2,esHoja:false},
+  'Developer': {padre:'',etiqueta:'Developer',tipo:'Ingresos',nivel:1,esHoja:true},
+  'Dinero Prestado': {padre:'Intereses',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Dispositivos (moviles, laptops, tablets)': {padre:'Tecnología y electrónica',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Donativos': {padre:'',etiqueta:'Donativos',tipo:'Gastos',nivel:1,esHoja:false},
+  'Dulces y postres': {padre:'Snacks y antojos',etiqueta:'Comida',tipo:'Gastos',nivel:3,esHoja:true},
+  'ETFs': {padre:'Inversiones financieras',etiqueta:'Inversión',tipo:'Gastos',nivel:3,esHoja:true},
+  'Educacion': {padre:'',etiqueta:'Educacion',tipo:'Gastos',nivel:1,esHoja:false},
+  'Electrodomesticos': {padre:'Hogar',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Emely': {padre:'Trabajo',etiqueta:'Trabajo',tipo:'Ingresos',nivel:2,esHoja:true},
+  'Enlatados y conservas': {padre:'Supermercado',etiqueta:'Comida',tipo:'Gastos',nivel:3,esHoja:true},
+  'Ensayos': {padre:'Eventos',etiqueta:'Eventos',tipo:'Ingresos',nivel:2,esHoja:true},
+  'Entretenimiento': {padre:'',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:1,esHoja:false},
+  'Envío Carro': {padre:'Otros servicios',etiqueta:'Servicios',tipo:'Gastos',nivel:3,esHoja:true},
+  'Envío Motor': {padre:'Otros servicios',etiqueta:'Servicios',tipo:'Gastos',nivel:3,esHoja:true},
+  'Equipaje': {padre:'Viajes y ocio',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Equipos y herramientas para negocio': {padre:'Negocios',etiqueta:'Inversión',tipo:'Gastos',nivel:3,esHoja:true},
+  'Escapadas de fin de semana': {padre:'Viajes de entretenimiento',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:3,esHoja:true},
+  'Escuelas': {padre:'Matrícula y colegiaturas',etiqueta:'Educacion',tipo:'Gastos',nivel:3,esHoja:true},
+  'Eventos': {padre:'',etiqueta:'Eventos',tipo:'Ingresos',nivel:1,esHoja:false},
+  'Eventos Cristianos': {padre:'Eventos',etiqueta:'Eventos',tipo:'Ingresos',nivel:2,esHoja:true},
+  'Eventos en casa': {padre:'Entretenimiento',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:2,esHoja:false},
+  'Excursiones y campamentos': {padre:'Actividades extracurriculares',etiqueta:'Educacion',tipo:'Gastos',nivel:3,esHoja:true},
+  'Expansión de operaciones': {padre:'Negocios',etiqueta:'Inversión',tipo:'Gastos',nivel:3,esHoja:true},
+  'Familia': {padre:'Donativos',etiqueta:'Donativos',tipo:'Gastos',nivel:2,esHoja:false},
+  'Fondo de Fondos Altio +': {padre:'Inversiones',etiqueta:'Investment',tipo:'Ingresos',nivel:2,esHoja:true},
+  'Fondo de emergencia': {padre:'Ahorros',etiqueta:'Ahorros',tipo:'Gastos',nivel:2,esHoja:true},
+  'Fondos mutuos': {padre:'Inversiones financieras',etiqueta:'Inversión',tipo:'Gastos',nivel:3,esHoja:true},
+  'Frutas y verduras': {padre:'Supermercado',etiqueta:'Comida',tipo:'Gastos',nivel:3,esHoja:true},
+  'Gas': {padre:'Hogar servicios',etiqueta:'Servicios',tipo:'Gastos',nivel:3,esHoja:true},
+  'Gastos': {padre:'',etiqueta:'Gastos',tipo:'Gastos',nivel:1,esHoja:true},
+  'Gastos financieros': {padre:'',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:1,esHoja:false},
+  'Gym': {padre:'Salud y bienestar',etiqueta:'Servicios',tipo:'Gastos',nivel:3,esHoja:true},
+  'Haina Investment 2034 +': {padre:'Inversiones',etiqueta:'Investment',tipo:'Ingresos',nivel:2,esHoja:true},
+  'Herramientas': {padre:'Hogar',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Hipotecas': {padre:'Intereses',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Hobbies': {padre:'Compras',etiqueta:'Compras',tipo:'Gastos',nivel:2,esHoja:false},
+  'Hobbies y pasatiempos': {padre:'Entretenimiento',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:2,esHoja:false},
+  'Hogar': {padre:'Compras',etiqueta:'Compras',tipo:'Gastos',nivel:2,esHoja:false},
+  'Hogar servicios': {padre:'Servicios',etiqueta:'Servicios',tipo:'Gastos',nivel:2,esHoja:false},
+  'Horas extras': {padre:'Trabajo',etiqueta:'Trabajo',tipo:'Ingresos',nivel:2,esHoja:true},
+  'Iglesia': {padre:'Donativos',etiqueta:'Donativos',tipo:'Gastos',nivel:2,esHoja:false},
+  'Iglesias': {padre:'',etiqueta:'Iglesias',tipo:'Ingresos',nivel:1,esHoja:true},
+  'Impuestos': {padre:'Gastos financieros',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:2,esHoja:false},
+  'Impuestos otros': {padre:'Otroo',etiqueta:'Otros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Impuestos sobre la renta': {padre:'Impuestos',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Ingresos': {padre:'',etiqueta:'Ingresos',tipo:'Ingresos',nivel:1,esHoja:true},
+  'Instalacion': {padre:'Hogar servicios',etiqueta:'Servicios',tipo:'Gastos',nivel:3,esHoja:true},
+  'Instrumento Musical': {padre:'Hobbies',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Intereses': {padre:'Gastos financieros',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:2,esHoja:false},
+  'Intereses, dividendos': {padre:'',etiqueta:'Intereses, dividendos',tipo:'Ingresos',nivel:1,esHoja:true},
+  'Internet': {padre:'Tecnología y comunicaciones',etiqueta:'Servicios',tipo:'Gastos',nivel:3,esHoja:true},
+  'Inversion': {padre:'Inversiones financieras',etiqueta:'Inversión',tipo:'Gastos',nivel:3,esHoja:true},
+  'Inversiones': {padre:'',etiqueta:'Investment',tipo:'Ingresos',nivel:1,esHoja:false},
+  'Inversiones financiera': {padre:'Gastos financieros',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:2,esHoja:false},
+  'Inversiones financieras': {padre:'Inversiones',etiqueta:'Inversión',tipo:'Gastos',nivel:2,esHoja:false},
+  'JRFPFFAA': {padre:'Trabajo',etiqueta:'Trabajo',tipo:'Ingresos',nivel:2,esHoja:true},
+  'Jardín y exteriores': {padre:'Hogar',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Juegos': {padre:'Actividades al aire libre',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:3,esHoja:true},
+  'Juegos de mesa o karaoke': {padre:'Eventos en casa',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:3,esHoja:true},
+  'Junior y Johanny': {padre:'Familia',etiqueta:'Donativos',tipo:'Gastos',nivel:3,esHoja:true},
+  'Larga distancia': {padre:'Transporte',etiqueta:'Transporte',tipo:'Gastos',nivel:2,esHoja:true},
+  'Libros y manuales': {padre:'Materiales educativos',etiqueta:'Educacion',tipo:'Gastos',nivel:3,esHoja:true},
+  'Limpieza': {padre:'Hogar servicios',etiqueta:'Servicios',tipo:'Gastos',nivel:3,esHoja:true},
+  'Luz': {padre:'Hogar servicios',etiqueta:'Servicios',tipo:'Gastos',nivel:3,esHoja:true},
+  'Lácteos y huevos': {padre:'Supermercado',etiqueta:'Comida',tipo:'Gastos',nivel:3,esHoja:true},
+  'Mami': {padre:'Familia',etiqueta:'Donativos',tipo:'Gastos',nivel:3,esHoja:true},
+  'Mantenimiento': {padre:'Hogar servicios',etiqueta:'Servicios',tipo:'Gastos',nivel:3,esHoja:true},
+  'Mantenimiento de cuentas': {padre:'Comisiones bancarias',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Maquillaje': {padre:'Belleza',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Material de arte': {padre:'Otras compras',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Materiales de arte y diseño': {padre:'Materiales educativos',etiqueta:'Educacion',tipo:'Gastos',nivel:3,esHoja:true},
+  'Materiales educativos': {padre:'Educacion',etiqueta:'Educacion',tipo:'Gastos',nivel:2,esHoja:false},
+  'Matrícula y colegiaturas': {padre:'Educacion',etiqueta:'Educacion',tipo:'Gastos',nivel:2,esHoja:false},
+  'Medicamentos': {padre:'Salud',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Memorial': {padre:'Eventos',etiqueta:'Eventos',tipo:'Ingresos',nivel:2,esHoja:true},
+  'Metro': {padre:'Transporte público',etiqueta:'Transporte',tipo:'Gastos',nivel:3,esHoja:true},
+  'Misiones': {padre:'Iglesia',etiqueta:'Donativos',tipo:'Gastos',nivel:3,esHoja:true},
+  'Mon Amour': {padre:'Donativos',etiqueta:'Donativos',tipo:'Gastos',nivel:2,esHoja:false},
+  'Motor': {padre:'Transporte privado',etiqueta:'Transporte',tipo:'Gastos',nivel:3,esHoja:true},
+  'Muebles': {padre:'Hogar',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Multas y recargos': {padre:'Impuestos',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Music Class': {padre:'Clases de Música',etiqueta:'Clases de Música',tipo:'Ingresos',nivel:2,esHoja:true},
+  'Negocios': {padre:'Inversiones',etiqueta:'Inversión',tipo:'Gastos',nivel:2,esHoja:false},
+  'Ofrenda': {padre:'Iglesia',etiqueta:'Donativos',tipo:'Gastos',nivel:3,esHoja:true},
+  'Omsa': {padre:'Transporte público',etiqueta:'Transporte',tipo:'Gastos',nivel:3,esHoja:true},
+  'Organización y almacenamiento': {padre:'Hogar',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Otras compras': {padre:'Compras',etiqueta:'Compras',tipo:'Gastos',nivel:2,esHoja:false},
+  'Otro Familiar': {padre:'Familia',etiqueta:'Donativos',tipo:'Gastos',nivel:3,esHoja:true},
+  'Otroo': {padre:'Otros',etiqueta:'Otros',tipo:'Gastos',nivel:2,esHoja:false},
+  'Otros': {padre:'',etiqueta:'Otros',tipo:'Gastos',nivel:1,esHoja:false},
+  'Otros antojos': {padre:'Snacks y antojos',etiqueta:'Comida',tipo:'Gastos',nivel:3,esHoja:true},
+  'Otros gastos relacionados': {padre:'Educacion',etiqueta:'Educacion',tipo:'Gastos',nivel:2,esHoja:false},
+  'Otros ingresos': {padre:'',etiqueta:'Otros Ingresos',tipo:'Ingresos',nivel:1,esHoja:true},
+  'Otros productos': {padre:'Supermercado',etiqueta:'Comida',tipo:'Gastos',nivel:3,esHoja:true},
+  'Otros servicios': {padre:'Servicios',etiqueta:'Servicios',tipo:'Gastos',nivel:2,esHoja:false},
+  'Pagos de capital de préstamos': {padre:'Deudas y créditos',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Papelería': {padre:'Compras',etiqueta:'Compras',tipo:'Gastos',nivel:2,esHoja:true},
+  'Papi': {padre:'Familia',etiqueta:'Donativos',tipo:'Gastos',nivel:3,esHoja:true},
+  'Parques temáticos o de atracciones': {padre:'Salidas sociales',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:3,esHoja:true},
+  'Peluqueria y salon': {padre:'Salud y bienestar',etiqueta:'Servicios',tipo:'Gastos',nivel:3,esHoja:true},
+  'Prendas casuales': {padre:'Ropa y calzado',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Productos de cuidado personal': {padre:'Belleza',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Productos de higiene': {padre:'Salud',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Productos de limpieza': {padre:'Hogar',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Propina': {padre:'Ayuda',etiqueta:'Donativos',tipo:'Gastos',nivel:3,esHoja:true},
+  'Préstamos personales': {padre:'Intereses',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Publicidad y marketing': {padre:'Negocios',etiqueta:'Inversión',tipo:'Gastos',nivel:3,esHoja:true},
+  'Puntos': {padre:'',etiqueta:'Puntos',tipo:'Ingresos',nivel:1,esHoja:true},
+  'Pérdidas en inversiones': {padre:'Inversiones financiera',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Rachel': {padre:'Familia',etiqueta:'Donativos',tipo:'Gastos',nivel:3,esHoja:true},
+  'Refinanciamientos': {padre:'Deudas y créditos',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Regalo': {padre:'Donativos',etiqueta:'Donativos',tipo:'Gastos',nivel:2,esHoja:true},
+  'Regalos': {padre:'',etiqueta:'Regalos',tipo:'Ingresos',nivel:1,esHoja:true},
+  'Reparaciones': {padre:'Hogar servicios',etiqueta:'Servicios',tipo:'Gastos',nivel:3,esHoja:true},
+  'Restaurantes y cafés': {padre:'Salidas sociales',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:3,esHoja:true},
+  'Retiro en cajeros': {padre:'Comisiones bancarias',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Reuniones con amigos o familiares': {padre:'Eventos en casa',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:3,esHoja:true},
+  'Ropa de hombre': {padre:'Ropa y calzado',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Ropa de mujer': {padre:'Ropa y calzado',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Ropa formal': {padre:'Ropa y calzado',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Ropa y calzado': {padre:'Compras',etiqueta:'Compras',tipo:'Gastos',nivel:2,esHoja:false},
+  'Salidas sociales': {padre:'Entretenimiento',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:2,esHoja:false},
+  'Salud': {padre:'Compras',etiqueta:'Compras',tipo:'Gastos',nivel:2,esHoja:false},
+  'Salud y bienestar': {padre:'Servicios',etiqueta:'Servicios',tipo:'Gastos',nivel:2,esHoja:false},
+  'Seguros': {padre:'Gastos financieros',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:2,esHoja:false},
+  'Seguros de préstamos': {padre:'Seguros',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Seguros de tarjeta': {padre:'Seguros',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Seguros de vida': {padre:'Seguros',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Seguros médicos': {padre:'Salud y bienestar',etiqueta:'Servicios',tipo:'Gastos',nivel:3,esHoja:true},
+  'Seguros para inversiones': {padre:'Seguros',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Servicios': {padre:'',etiqueta:'Servicios',tipo:'Gastos',nivel:1,esHoja:false},
+  'Servicios de mudanza': {padre:'Hogar servicios',etiqueta:'Servicios',tipo:'Gastos',nivel:3,esHoja:true},
+  'Servicios financieros': {padre:'Otros servicios',etiqueta:'Servicios',tipo:'Gastos',nivel:3,esHoja:true},
+  'Servicios legales': {padre:'Otros servicios',etiqueta:'Servicios',tipo:'Gastos',nivel:3,esHoja:true},
+  'Servicios tecnologicos': {padre:'Tecnología y comunicaciones',etiqueta:'Servicios',tipo:'Gastos',nivel:3,esHoja:true},
+  'Snacks salados': {padre:'Snacks y antojos',etiqueta:'Comida',tipo:'Gastos',nivel:3,esHoja:true},
+  'Snacks y antojos': {padre:'Comida',etiqueta:'Comida',tipo:'Gastos',nivel:2,esHoja:false},
+  'Software educativo': {padre:'Materiales educativos',etiqueta:'Educacion',tipo:'Gastos',nivel:3,esHoja:true},
+  'Summer Work': {padre:'Otroo',etiqueta:'Otros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Supermercado': {padre:'Comida',etiqueta:'Comida',tipo:'Gastos',nivel:2,esHoja:false},
+  'Suplementos': {padre:'Salud',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Suscripciones a plataformas de inversión': {padre:'Inversiones financiera',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Suscripciones o recursos educativos en línea': {padre:'Otros gastos relacionados',etiqueta:'Educacion',tipo:'Gastos',nivel:3,esHoja:true},
+  'Tarjetas de crédito': {padre:'Intereses',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Taxi': {padre:'Transporte privado',etiqueta:'Transporte',tipo:'Gastos',nivel:3,esHoja:true},
+  'Teatro': {padre:'Entretenimiento',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:2,esHoja:true},
+  'Tecnología y comunicaciones': {padre:'Servicios',etiqueta:'Servicios',tipo:'Gastos',nivel:2,esHoja:false},
+  'Tecnología y electrónica': {padre:'Compras',etiqueta:'Compras',tipo:'Gastos',nivel:2,esHoja:false},
+  'Telefonía': {padre:'Tecnología y comunicaciones',etiqueta:'Servicios',tipo:'Gastos',nivel:3,esHoja:true},
+  'Tours turísticos': {padre:'Viajes de entretenimiento',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:3,esHoja:true},
+  'Trabajo': {padre:'',etiqueta:'Trabajo',tipo:'Ingresos',nivel:1,esHoja:false},
+  'Transferencia': {padre:'Otroo',etiqueta:'Otros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Transferencias internacionales': {padre:'Comisiones bancarias',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Transferencias nacionales': {padre:'Comisiones bancarias',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:3,esHoja:true},
+  'Transporte': {padre:'',etiqueta:'Transporte',tipo:'Gastos',nivel:1,esHoja:false},
+  'Transporte privado': {padre:'Transporte',etiqueta:'Transporte',tipo:'Gastos',nivel:2,esHoja:false},
+  'Transporte público': {padre:'Transporte',etiqueta:'Transporte',tipo:'Gastos',nivel:2,esHoja:false},
+  'Tutorías': {padre:'Otros gastos relacionados',etiqueta:'Educacion',tipo:'Gastos',nivel:3,esHoja:true},
+  'Universidad': {padre:'Educacion',etiqueta:'Educacion',tipo:'Gastos',nivel:2,esHoja:true},
+  'Universidades': {padre:'Matrícula y colegiaturas',etiqueta:'Educacion',tipo:'Gastos',nivel:3,esHoja:true},
+  'Vehículos, propiedades': {padre:'Inversiones',etiqueta:'Inversión',tipo:'Gastos',nivel:2,esHoja:true},
+  'Viajes': {padre:'Transporte',etiqueta:'Transporte',tipo:'Gastos',nivel:2,esHoja:true},
+  'Viajes de entretenimiento': {padre:'Entretenimiento',etiqueta:'Entretenimiento',tipo:'Gastos',nivel:2,esHoja:false},
+  'Viajes y ocio': {padre:'Compras',etiqueta:'Compras',tipo:'Gastos',nivel:2,esHoja:false},
+  'Vitaminas': {padre:'Salud',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+};
+
+// Colores por Etiqueta Principal (categoría raíz visual)
+const ETIQUETA_COLORS = {
+  'Comida': '#ef4444',
+  'Compras': '#f97316',
+  'Transporte': '#f59e0b',
+  'Servicios': '#0ea5e9',
+  'Gastos financieros': '#8b5cf6',
+  'Otros': '#64748b',
+  'Donativos': '#ec4899',
+  'Educacion': '#3b82f6',
+  'Entretenimiento': '#d946ef',
+  'Ahorros': '#22c55e',
+  'Inversión': '#14b8a6',
+  'Trabajo': '#6366f1',
+  'Clases de Música': '#a855f7',
+  'Eventos': '#f43f5e',
+  'Iglesias': '#eab308',
+  'Developer': '#06b6d4',
+  'Cheques, cupones': '#84cc16',
+  'Regalos': '#f97316',
+  'Puntos': '#10b981',
+  'Intereses, dividendos': '#22d3ee',
+  'Investment': '#f59e0b',
+  'Otros Ingresos': '#94a3b8'
+};
+
+function getCatMeta(nombre) {
+  return CAT_DB[nombre] || { padre: '', etiqueta: 'General', tipo: 'Gastos', nivel: 1, esHoja: true };
+}
+
+function getEtiquetaColor(etiqueta) {
+  return ETIQUETA_COLORS[etiqueta] || '#64748b';
+}
+
+// === HELPERS DE FILTRADO ===
+function filterCatsByTipo(catsEntries, tipo) {
+  if (tipo === 'todos') return catsEntries;
+  return catsEntries.filter(([name, data]) => getCatMeta(name).tipo === tipo);
+}
+
+function getTipoLabel(t) {
+  return t === 'gastos' ? 'Gastos' : t === 'ingresos' ? 'Ingresos' : 'Todas';
+}
+
+function getTipoColor(t) {
+  return t === 'gastos' ? '#ef4444' : t === 'ingresos' ? '#22c55e' : '#3b82f6';
+}
+
+// === CARGA LAZY DE DATOS ===
+function loadGastosData() {
+  return new Promise((resolve, reject) => {
+    const callbackName = 'gastosCallback_' + Date.now();
+    const script = document.createElement('script');
+    const timeout = setTimeout(() => {
+      reject(new Error('Timeout JSONP (getGastos)'));
+      cleanup();
+    }, 30000);
+
+    function cleanup() {
+      if (script.parentNode) script.parentNode.removeChild(script);
+      delete window[callbackName];
+      clearTimeout(timeout);
+    }
+
+    window[callbackName] = (data) => {
+      if (data && data.error) {
+        reject(new Error(data.message));
+      } else {
+        gastosData = data;
+        resolve(data);
+      }
+      cleanup();
+    };
+
+    script.onerror = () => {
+      reject(new Error('Error de red JSONP (getGastos)'));
+      cleanup();
+    };
+
+    const url = CONFI.API_URL + '?action=getGastos&callback=' + callbackName;
+    script.src = url;
+    document.head.appendChild(script);
+  });
+}
+
+async function renderDBGastosTab() {
+  if (!gastosData) {
+    try {
+      await loadGastosData();
+    } catch (e) {
+      console.error('Error cargando DB_GASTOS:', e);
+      document.getElementById('dbGastosStats').innerHTML =
+        '<div class="stat-card" style="grid-column:1/-1"><div class="stat-value" style="font-size:16px;color:#f87171">Error: ' + e.message + '</div></div>';
+      return;
+    }
+  }
+  renderDBGastos();
+}
+
+function renderDBGastos() {
+  if (!gastosData) return;
+  const meta = gastosData.metadata;
+  document.getElementById('dbGastosMeta').textContent =
+    `${meta.totalMonths} meses · ${meta.totalPrincipales} principales · ${meta.totalCategories} subcategorías · Actualizado: ${meta.lastUpdate}`;
+
+  renderDBGastosStats();
+  renderDBGastosTotalChart();
+  renderDBGastosTopCurrentChart();
+  renderDBGastosAllCategories();
+}
+
+// === STATS: usa gasto/ingreso separados del backend (solo principales) ===
+function renderDBGastosStats() {
+  const r = gastosData.resumen;
+  const mAct = r.mesActual || { gasto: 0, ingreso: 0, total: 0, mes: '—' };
+  const mAnt = r.mesAnterior || { gasto: 0, ingreso: 0, total: 0, mes: '—' };
+
+  const cambioGasto = mAct.gasto - mAnt.gasto;
+  const cambioGastoPct = mAnt.gasto > 0 ? (cambioGasto / mAnt.gasto) * 100 : 0;
+  const balanceNeto = mAct.ingreso - mAct.gasto;
+
+  // Promedios desde totalPorMes (ya solo principales)
+  const tp = r.totalPorMes || [];
+  const avgGasto = tp.length > 0 ? tp.reduce((a, b) => a + b.gasto, 0) / tp.length : 0;
+  const avgIngreso = tp.length > 0 ? tp.reduce((a, b) => a + b.ingreso, 0) / tp.length : 0;
+
+  // Categorías activas (principales con current > 0)
+  const principales = Object.entries(gastosData.categorias).filter(([name]) => {
+    const meta = getCatMeta(name);
+    return !meta.padre; // nivel 1 = sin padre
+  });
+  const gastosActivos = principales.filter(([name, d]) => getCatMeta(name).tipo === 'Gastos' && (d.current || 0) > 0).length;
+  const ingresosActivos = principales.filter(([name, d]) => getCatMeta(name).tipo === 'Ingresos' && (d.current || 0) > 0).length;
+
+  const html = `
+    <div class="stat-card" style="border-top:3px solid #ef4444">
+      <div class="stat-header"><span class="stat-label">Gasto Mes Actual</span></div>
+      <div class="stat-value" style="color:#f87171">${fmtMoney(mAct.gasto)}</div>
+      <div class="stat-sub">${mAct.mes} · Solo categorías principales</div>
+    </div>
+    <div class="stat-card" style="border-top:3px solid #22c55e">
+      <div class="stat-header"><span class="stat-label">Ingreso Mes Actual</span></div>
+      <div class="stat-value" style="color:#4ade80">${fmtMoney(mAct.ingreso)}</div>
+      <div class="stat-sub">${mAct.mes} · Solo categorías principales</div>
+    </div>
+    <div class="stat-card" style="border-top:3px solid #3b82f6">
+      <div class="stat-header"><span class="stat-label">Balance Neto</span></div>
+      <div class="stat-value" style="color:${balanceNeto >= 0 ? '#4ade80' : '#f87171'}">${fmtMoney(balanceNeto)}</div>
+      <div class="stat-sub">Ingresos − Gastos (principales)</div>
+    </div>
+    <div class="stat-card" style="border-top:3px solid #f59e0b">
+      <div class="stat-header"><span class="stat-label">Variación Gasto MoM</span></div>
+      <div class="stat-value" style="color:${cambioGasto > 0 ? '#f87171' : '#4ade80'}">${cambioGasto > 0 ? '+' : ''}${fmtMoney(cambioGasto)}</div>
+      <div class="stat-sub">${cambioGastoPct > 0 ? '▲' : '▼'} ${Math.abs(cambioGastoPct).toFixed(1)}% vs ${mAnt.mes}</div>
+    </div>
+    <div class="stat-card" style="border-top:3px solid #8b5cf6">
+      <div class="stat-header"><span class="stat-label">Promedio Mensual</span></div>
+      <div class="stat-value">${fmtMoney(avgGasto)}</div>
+      <div class="stat-sub">Gasto · ${fmtMoney(avgIngreso)} ingreso (principales)</div>
+    </div>
+    <div class="stat-card" style="border-top:3px solid #0ea5e9">
+      <div class="stat-header"><span class="stat-label">Categorías Activas</span></div>
+      <div class="stat-value">${gastosActivos + ingresosActivos}</div>
+      <div class="stat-sub">${gastosActivos} gastos · ${ingresosActivos} ingresos (principales)</div>
+    </div>
+  `;
+  document.getElementById('dbGastosStats').innerHTML = html;
+}
+
+function renderDBGastosTotalChart() {
+  const ctx = getCanvas('dbGastosTotalChart');
+  if (!ctx) return;
+
+  const data = (gastosData.resumen.totalPorMes || []).map(d => ({
+    date: formatShortDate(d.isoDate || d.mes),
+    gasto: d.gasto || 0,
+    ingreso: d.ingreso || 0
+  }));
+
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: data.map(d => d.date),
+      datasets: [
+        {
+          label: 'Gastos',
+          data: data.map(d => d.gasto),
+          borderColor: '#ef4444',
+          backgroundColor: 'rgba(239,68,68,0.08)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 0,
+          pointHoverRadius: 5
+        },
+        {
+          label: 'Ingresos',
+          data: data.map(d => d.ingreso),
+          borderColor: '#22c55e',
+          backgroundColor: 'rgba(34,197,94,0.08)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 0,
+          pointHoverRadius: 5
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { intersect: false, mode: 'index' },
+      plugins: {
+        legend: {
+          position: 'top',
+          align: 'end',
+          labels: { color: '#94a3b8', font: { size: 11 }, usePointStyle: true }
+        },
+        tooltip: {
+          backgroundColor: 'rgba(15,23,42,0.95)',
+          titleColor: '#e2e8f0', bodyColor: '#e2e8f0',
+          borderColor: 'rgba(51,65,85,0.5)', borderWidth: 1,
+          callbacks: {
+            label: (ctx) => ctx.dataset.label + ': RD$ ' + ctx.parsed.y.toLocaleString('es-DO', {minimumFractionDigits: 2})
+          }
+        }
+      },
+      scales: {
+        x: { type: 'category', grid: { display: false }, ticks: { color: '#64748b', font: { size: 10 }, maxTicksLimit: 10 } },
+        y: { grid: { color: 'rgba(51,65,85,0.2)' }, ticks: { color: '#64748b', font: { size: 10 }, callback: (v) => 'RD$' + (v/1000).toFixed(0) + 'K' } }
+      }
+    }
+  });
+}
+
+function renderDBGastosTopCurrentChart() {
+  const ctx = getCanvas('dbGastosTopCurrentChart');
+  if (!ctx) return;
+
+  // Top 15 de GASTOS (principales)
+  const topGastos = Object.entries(gastosData.categorias)
+    .filter(([name, data]) => {
+      const meta = getCatMeta(name);
+      return !meta.padre && meta.tipo === 'Gastos' && data.current > 0;
+    })
+    .sort((a, b) => b[1].current - a[1].current)
+    .slice(0, 15);
+
+  document.getElementById('dbGastosTopCurrentSub').textContent =
+    (gastosData.resumen.mesActual?.mes || '') + ' · Categorías Principales';
+
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: topGastos.map(([name]) => name),
+      datasets: [{
+        label: 'Gasto Actual',
+        data: topGastos.map(([, d]) => d.current),
+        backgroundColor: topGastos.map(([name]) => {
+          const meta = getCatMeta(name);
+          return getEtiquetaColor(meta.etiqueta);
+        }),
+        borderRadius: 6,
+        barPercentage: 0.65
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(15,23,42,0.95)',
+          titleColor: '#e2e8f0', bodyColor: '#e2e8f0',
+          borderColor: 'rgba(51,65,85,0.5)', borderWidth: 1,
+          callbacks: {
+            label: (ctx) => 'RD$ ' + ctx.parsed.x.toLocaleString('es-DO', {minimumFractionDigits: 2})
+          }
+        }
+      },
+      scales: {
+        x: { grid: { color: 'rgba(51,65,85,0.2)' }, ticks: { color: '#64748b', font: { size: 10 }, callback: (v) => 'RD$' + (v/1000).toFixed(0) + 'K' } },
+        y: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 11 } } }
+      }
+    }
+  });
+}
+
+// ============================================================================
+// DB_GASTOS — LISTA COMPLETA CON TODAS LAS SUBCATEGORÍAS
+// ============================================================================
+
+function renderDBGastosAllCategories() {
+  const container = document.getElementById('dbGastosAllCategories');
+  // TODAS las categorías (principales + subcategorías)
+  const allCats = Object.entries(gastosData.categorias).sort((a, b) => b[1].current - a[1].current);
+  const maxVal = Math.max(...allCats.map(([, c]) => c.current), 1);
+
+  const tipoColor = getTipoColor(dbGastosFilter);
+  const filterHtml = `
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+      <button onclick="setDBGastosFilter('gastos')" class="db-filter-btn ${dbGastosFilter === 'gastos' ? 'active' : ''}" data-filter="gastos">🔴 Gastos</button>
+      <button onclick="setDBGastosFilter('ingresos')" class="db-filter-btn ${dbGastosFilter === 'ingresos' ? 'active' : ''}" data-filter="ingresos">🟢 Ingresos</button>
+      <button onclick="setDBGastosFilter('todos')" class="db-filter-btn ${dbGastosFilter === 'todos' ? 'active' : ''}" data-filter="todos">🔵 Todos</button>
+      <span style="margin-left:auto;font-size:12px;color:#64748b;font-weight:600;align-self:center;">
+        Mostrando: <span style="color:${tipoColor}">${getTipoLabel(dbGastosFilter)}</span> · Todas las categorías
+      </span>
+    </div>
+  `;
+
+  function buildList(filterText = '') {
+    const fLower = filterText.toLowerCase();
+    let filtered = filterCatsByTipo(allCats, dbGastosFilter).filter(([name, data]) => {
+      const meta = getCatMeta(name);
+      return name.toLowerCase().includes(fLower) ||
+             (meta.etiqueta && meta.etiqueta.toLowerCase().includes(fLower)) ||
+             (meta.padre && meta.padre.toLowerCase().includes(fLower));
+    });
+
+    if (filtered.length === 0) {
+      return '<div style="color:#64748b;text-align:center;padding:24px;">Sin resultados</div>';
+    }
+
+    // Agrupar por etiqueta principal
+    const grupos = {};
+    filtered.forEach(([name, data]) => {
+      const meta = getCatMeta(name);
+      const key = meta.etiqueta || 'General';
+      if (!grupos[key]) grupos[key] = [];
+      grupos[key].push({ name, data, meta });
+    });
+
+    // Ordenar grupos por total del grupo
+    const grupoEntries = Object.entries(grupos).sort((a, b) => {
+      const sumA = a[1].reduce((s, c) => s + c.data.current, 0);
+      const sumB = b[1].reduce((s, c) => s + c.data.current, 0);
+      return sumB - sumA;
+    });
+
+    let html = '';
+    grupoEntries.forEach(([etiqueta, items]) => {
+      const color = getEtiquetaColor(etiqueta);
+      const grupoTotal = items.reduce((s, c) => s + c.data.current, 0);
+
+      // Separar principales y subcategorías
+      const principales = items.filter(c => !c.meta.padre);
+      const subcats = items.filter(c => c.meta.padre);
+
+      html += `
+        <div style="margin-bottom:4px;padding:10px 12px;background:rgba(15,23,42,0.6);border-radius:10px 10px 0 0;border-left:3px solid ${color};margin-top:16px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-size:12px;font-weight:700;color:${color};text-transform:uppercase;letter-spacing:0.08em;">${etiqueta}</span>
+            <span style="font-size:11px;color:#64748b;font-weight:600;">${items.length} cat · ${fmtMoney(grupoTotal)}</span>
+          </div>
+        </div>
+      `;
+
+      html += `<div class="asset-list" style="margin-bottom:12px;">`;
+
+      // Primero las principales (sin padre)
+      principales.forEach(({name, data, meta}) => {
+        const pct = (data.current / maxVal) * 100;
+        const isGasto = meta.tipo === 'Gastos';
+        const changeColor = data.change > 0 ? (isGasto ? '#f87171' : '#4ade80') : (isGasto ? '#4ade80' : '#f87171');
+        const changeIcon = data.change > 0 ? '▲' : data.change < 0 ? '▼' : '—';
+        const tipoBadge = meta.tipo === 'Ingresos' ? `<span style="display:inline-block;padding:1px 6px;background:rgba(34,197,94,0.15);border-radius:4px;font-size:10px;color:#4ade80;margin-left:6px;">IN</span>` : '';
+        const principalBadge = `<span style="display:inline-block;padding:1px 6px;background:${color}30;border-radius:4px;font-size:10px;color:${color};margin-left:6px;font-weight:700;">PRINCIPAL</span>`;
+
+        html += `
+          <div class="asset-item" style="cursor:pointer;border-radius:0;background:rgba(30,41,59,0.7);" onclick="openGastoModal('${name.replace(/'/g, "\\'")}')">
+            <div class="asset-icon-wrap" style="background:${color}25;color:${color};font-size:14px;width:44px;height:44px;">●</div>
+            <div class="asset-info">
+              <div class="asset-name">${name}${principalBadge}${tipoBadge}</div>
+              <div class="asset-meta">
+                Total hist: ${fmtMoney(data.total)} · 
+                <span style="color:${changeColor}">${changeIcon} ${Math.abs(data.changePct).toFixed(1)}%</span> vs ant.
+              </div>
+              <div class="asset-progress">
+                <div class="asset-progress-fill" style="width:${pct}%;background:${color}"></div>
+              </div>
+            </div>
+            <div class="asset-value">
+              <div class="asset-amount">${fmtMoney(data.current)}</div>
+              <div class="asset-pct" style="color:${changeColor};font-size:11px">
+                ${data.previous > 0 ? ((data.current/data.previous)*100).toFixed(0) + '% del ant.' : '—'}
+              </div>
+            </div>
+          </div>
+        `;
+      });
+
+      // Luego las subcategorías (con padre)
+      subcats.forEach(({name, data, meta}) => {
+        const pct = (data.current / maxVal) * 100;
+        const isGasto = meta.tipo === 'Gastos';
+        const changeColor = data.change > 0 ? (isGasto ? '#f87171' : '#4ade80') : (isGasto ? '#4ade80' : '#f87171');
+        const changeIcon = data.change > 0 ? '▲' : data.change < 0 ? '▼' : '—';
+        const tipoBadge = meta.tipo === 'Ingresos' ? `<span style="display:inline-block;padding:1px 6px;background:rgba(34,197,94,0.15);border-radius:4px;font-size:10px;color:#4ade80;margin-left:6px;">IN</span>` : '';
+        const padreTag = meta.padre ? `<span style="display:inline-block;padding:1px 6px;background:rgba(51,65,85,0.4);border-radius:4px;font-size:10px;color:#94a3b8;margin-left:6px;">${meta.padre}</span>` : '';
+
+        html += `
+          <div class="asset-item" style="cursor:pointer;border-radius:0;padding-left:28px;" onclick="openGastoModal('${name.replace(/'/g, "\\'")}')">
+            <div class="asset-icon-wrap" style="background:${color}15;color:${color}90;font-size:12px;width:36px;height:36px;">└</div>
+            <div class="asset-info">
+              <div class="asset-name">${name}${padreTag}${tipoBadge}</div>
+              <div class="asset-meta">
+                Total hist: ${fmtMoney(data.total)} · 
+                <span style="color:${changeColor}">${changeIcon} ${Math.abs(data.changePct).toFixed(1)}%</span> vs ant.
+              </div>
+              <div class="asset-progress">
+                <div class="asset-progress-fill" style="width:${pct}%;background:${color}80"></div>
+              </div>
+            </div>
+            <div class="asset-value">
+              <div class="asset-amount" style="font-size:14px;">${fmtMoney(data.current)}</div>
+              <div class="asset-pct" style="color:${changeColor};font-size:10px">
+                ${data.previous > 0 ? ((data.current/data.previous)*100).toFixed(0) + '% del ant.' : '—'}
+              </div>
+            </div>
+          </div>
+        `;
+      });
+
+      html += `</div>`;
+    });
+    return html;
+  }
+
+  container.innerHTML = filterHtml + buildList();
+
+  const search = document.getElementById('dbGastosSearch');
+  if (search) {
+    search.addEventListener('input', (e) => {
+      const btns = container.querySelector('.db-filter-btn')?.parentElement?.outerHTML || filterHtml;
+      container.innerHTML = btns + buildList(e.target.value);
+    });
+  }
+}
+
+
+function setDBGastosFilter(tipo) {
+  dbGastosFilter = tipo;
+  renderDBGastosAllCategories();
+}
+
+// === MODAL DETALLE CATEGORÍA ===
+function openGastoModal(name) {
+  const modal = document.getElementById('gastoDetailModal');
+  const title = document.getElementById('gastoModalTitle');
+  const cat = gastosData.categorias[name];
+  if (!cat) return;
+
+  const meta = getCatMeta(name);
+  const tipoBadge = meta.tipo === 'Ingresos'
+    ? '<span style="display:inline-block;padding:2px 8px;background:rgba(34,197,94,0.15);border-radius:4px;font-size:11px;color:#4ade80;margin-left:8px;">INGRESO</span>'
+    : '<span style="display:inline-block;padding:2px 8px;background:rgba(239,68,68,0.15);border-radius:4px;font-size:11px;color:#f87171;margin-left:8px;">GASTO</span>';
+
+  const breadcrumb = `<span style="font-size:12px;color:#64748b;font-weight:500;">${meta.etiqueta} › </span><span style="font-size:14px;color:#f8fafc;font-weight:700;">${name}</span>${tipoBadge}`;
+
+  title.innerHTML = breadcrumb;
+  modal.classList.add('active');
+  renderGastoDetailChart(name, cat, meta);
+  renderGastoBreakdown(name, cat, meta);
+}
+
+function closeGastoModal() {
+  document.getElementById('gastoDetailModal').classList.remove('active');
+  if (gastoDetailChart) {
+    gastoDetailChart.destroy();
+    gastoDetailChart = null;
+  }
+}
+
+function renderGastoDetailChart(name, cat, meta) {
+  const ctx = document.getElementById('gastoDetailChart');
+  if (!ctx) return;
+  if (gastoDetailChart) gastoDetailChart.destroy();
+
+  const history = (cat.history || []).map(d => ({
+    date: formatShortDate(d.isoDate || d.mes),
+    value: d.value
+  }));
+
+  if (history.length === 0) { ctx.style.display = 'none'; return; }
+  ctx.style.display = 'block';
+
+  const color = meta.tipo === 'Ingresos' ? '#22c55e' : getEtiquetaColor(meta.etiqueta);
+
+  gastoDetailChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: history.map(d => d.date),
+      datasets: [{
+        label: name,
+        data: history.map(d => d.value),
+        borderColor: color,
+        backgroundColor: color + '14',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 2,
+        pointHoverRadius: 5
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(15,23,42,0.95)',
+          titleColor: '#e2e8f0', bodyColor: '#e2e8f0',
+          borderColor: 'rgba(51,65,85,0.5)', borderWidth: 1,
+          callbacks: {
+            label: (ctx) => 'RD$ ' + ctx.parsed.y.toLocaleString('es-DO', {minimumFractionDigits: 2})
+          }
+        }
+      },
+      scales: {
+        x: { type: 'category', grid: { display: false }, ticks: { color: '#64748b', font: { size: 10 }, maxTicksLimit: 10 } },
+        y: { grid: { color: 'rgba(51,65,85,0.2)' }, ticks: { color: '#64748b', font: { size: 10 }, callback: (v) => 'RD$' + (v/1000).toFixed(0) + 'K' } }
+      }
+    }
+  });
+}
+
+function renderGastoBreakdown(name, cat, meta) {
+  const container = document.getElementById('gastoModalBreakdown');
+  const current = cat.current || 0;
+  const previous = cat.previous || 0;
+  const change = cat.change || 0;
+  const changePct = cat.changePct || 0;
+  const total = cat.total || 0;
+  const history = cat.history || [];
+  const maxVal = history.length > 0 ? Math.max(...history.map(h => h.value)) : current;
+  const minVal = history.length > 0 ? Math.min(...history.map(h => h.value)) : current;
+  const avgVal = history.length > 0 ? history.reduce((a, b) => a + b.value, 0) / history.length : current;
+
+  const isGasto = meta.tipo === 'Gastos';
+  const changeColor = change > 0 ? (isGasto ? '#f87171' : '#4ade80') : (isGasto ? '#4ade80' : '#f87171');
+
+  const jerarquia = `<div style="margin-bottom:14px;padding:8px 12px;background:rgba(51,65,85,0.2);border-radius:8px;font-size:12px;color:#94a3b8;">📂 ${meta.etiqueta} › <strong style="color:#f8fafc;">${name}</strong></div>`;
+
+  container.innerHTML = jerarquia + `
+    <div class="breakdown-item"><div class="name">Monto Actual</div><div class="value">${fmtMoney(current)}</div></div>
+    <div class="breakdown-item"><div class="name">Monto Anterior</div><div class="value">${fmtMoney(previous)}</div></div>
+    <div class="breakdown-item"><div class="name">Cambio Mensual</div><div class="value" style="color:${changeColor}">${change > 0 ? '+' : ''}${fmtMoney(change)}</div></div>
+    <div class="breakdown-item"><div class="name">Variación %</div><div class="value" style="color:${changeColor}">${change > 0 ? '+' : ''}${changePct.toFixed(2)}%</div></div>
+    <div class="breakdown-item"><div class="name">Máximo Histórico</div><div class="value" style="color:#f87171">${fmtMoney(maxVal)}</div></div>
+    <div class="breakdown-item"><div class="name">Mínimo Histórico</div><div class="value" style="color:#4ade80">${fmtMoney(minVal)}</div></div>
+    <div class="breakdown-item"><div class="name">Promedio Histórico</div><div class="value">${fmtMoney(avgVal)}</div></div>
+    <div class="breakdown-item"><div class="name">Total Acumulado</div><div class="value" style="color:#f8fafc;font-weight:800">${fmtMoney(total)}</div></div>
+    <div class="breakdown-total"><div class="name">PERÍODOS REGISTRADOS</div><div class="value">${history.length} meses</div></div>
+  `;
+}
+
+// Cerrar modal con click fuera o Escape
+document.addEventListener('click', function(e) {
+  const modal = document.getElementById('gastoDetailModal');
+  if (e.target === modal) closeGastoModal();
+});
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeGastoModal();
+});

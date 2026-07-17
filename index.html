@@ -51,6 +51,7 @@
       <button class="tab-btn" data-tab="expenses" onclick="switchTab('expenses')">Gastos</button>
       <button class="tab-btn" data-tab="analytics" onclick="switchTab('analytics')">Análisis</button>
       <button class="tab-btn" data-tab="ratios" onclick="switchTab('ratios')">Ratios</button>
+      <button class="tab-btn" data-tab="db-gastos" onclick="switchTab('db-gastos')">Gastos DB</button>
     </div>
   </div>
 
@@ -327,6 +328,7 @@
         <div class="chart-container" id="incomeVsExpenseChart"></div>
       </div>
     </section>
+    
     <section id="ratios" class="section">
       <h2 class="section-title">Ratios & KPIs</h2>
       <p class="section-subtitle">Métricas de salud financiera</p>
@@ -369,6 +371,63 @@
         <div class="chart-container" id="ratiosRadarChart"></div>
       </div>
     </section>
+
+    <section id="db-gastos" class="section">
+      <h2 class="section-title">Base de Datos de Gastos</h2>
+      <p class="section-subtitle">Histórico detallado por categoría — <span id="dbGastosMeta">—</span></p>
+
+      <div class="stats-grid" id="dbGastosStats"></div>
+
+      <div class="two-col">
+        <div class="chart-card">
+          <div class="chart-header">
+            <div>
+              <div class="chart-title">Evolución Total de Gastos</div>
+              <div class="chart-subtitle">Todos los meses registrados</div>
+            </div>
+          </div>
+          <div class="chart-container" id="dbGastosTotalChart"></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-header">
+            <div>
+              <div class="chart-title">Top 15 Categorías — Mes Actual</div>
+              <div class="chart-subtitle" id="dbGastosTopCurrentSub">—</div>
+            </div>
+          </div>
+          <div class="chart-container" id="dbGastosTopCurrentChart"></div>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-header" style="flex-wrap:wrap;gap:12px;">
+          <div>
+            <div class="chart-title">Todas las Categorías</div>
+            <div class="chart-subtitle">Click para ver historial completo</div>
+          </div>
+          <input type="text" id="dbGastosSearch" placeholder="Buscar categoría..." 
+                style="padding:8px 14px;border-radius:10px;border:1px solid rgba(51,65,85,0.4);background:rgba(15,23,42,0.5);color:#e2e8f0;font-size:13px;min-width:220px;">
+        </div>
+        <div id="dbGastosAllCategories"></div>
+      </div>
+
+      <!-- Modal detalle categoría -->
+      <div id="gastoDetailModal" class="asset-modal">
+        <div class="asset-modal-content">
+          <div class="asset-modal-header">
+            <h3 id="gastoModalTitle">Detalle de Categoría</h3>
+            <button onclick="closeGastoModal()" class="close-btn">&times;</button>
+          </div>
+          <div class="asset-modal-body">
+            <div class="asset-modal-chart">
+              <canvas id="gastoDetailChart"></canvas>
+            </div>
+            <div id="gastoModalBreakdown" class="asset-breakdown"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
   </main>
 
   <script src="app.js"></script>

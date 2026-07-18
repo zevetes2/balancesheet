@@ -608,64 +608,116 @@ function loadDataJSONP() {
         const trend12m = ((netWorth - val12mAgo) / Math.abs(val12mAgo)) * 100;
         
         // === EXECUTIVE SUMMARY ===
-        const now = new Date();
-        const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-        document.getElementById('summaryDate').textContent = `Al ${now.getDate()} de ${meses[now.getMonth()]}, ${now.getFullYear()}`;
+    const now = new Date();
+    const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+    document.getElementById('summaryDate').textContent = `Al ${now.getDate()} de ${meses[now.getMonth()]}, ${now.getFullYear()}`;
+
+    // Cambios vs mes anterior para pasivos
+    let creditoChange = 0;
+    let prestamoChange = 0;
+    for (const [name, data] of Object.entries(appData.creditos || {})) {
+        if (TARJETAS_NOMBRES.includes(name) || LINEAS_NOMBRES.includes(name)) {
+            creditoChange += (data.change || 0);
+        }
+        if (PRESTAMOS_NOMBRES.includes(name)) {
+            prestamoChange += (data.change || 0);
+        }
+    }
+
+    const totalCombined = totalAssets + totalLiab;
+    const pctAssets = totalCombined > 0 ? (totalAssets / totalCombined) * 100 : 0;
+    const pctLiab = totalCombined > 0 ? (totalLiab / totalCombined) * 100 : 0;
+
+    const arrow = (val) => {
+        if (val > 0) {
+            return '↑';
+        } else if(val < 0) {
+            return '↓';
+        }
+        else{
+            return '—';
+        }
+    };
+    const arrowcred = (val) =>
+    {
+        if (val > 0) {
+            return '↓';
+        } else if(val < 0) {
+            return '↑';
+        }
+        else{
+            return '—';
+        }
+    }
         
-        const activosHistory = s.activosTotales.history;
-        const pasivosHistory = s.pasivosTotal.history;
-        const val12mActivos = activosHistory.length > 12 ? activosHistory[activosHistory.length - 13].value : activosHistory[0].value;
-        const val12mPasivos = pasivosHistory.length > 12 ? pasivosHistory[pasivosHistory.length - 13].value : pasivosHistory[0].value;
-        const yoyActivos = val12mActivos !== 0 ? ((totalAssets - val12mActivos) / Math.abs(val12mActivos)) * 100 : 0;
-        const yoyPasivos = val12mPasivos !== 0 ? ((totalLiab - val12mPasivos) / Math.abs(val12mPasivos)) * 100 : 0;
-        
-        let healthStatus = 'Excelente';
-        let healthCardClass = 'success';
-        if (healthScore < 40) { healthStatus = 'Crítico'; healthCardClass = 'danger'; }
-        else if (healthScore < 60) { healthStatus = 'Atención'; healthCardClass = 'warning'; }
-        else if (healthScore < 80) { healthStatus = 'Bueno'; healthCardClass = ''; }
-        
-        const summaryHtml = `
-            <div class="summary-card primary">
-                <div class="summary-icon">💰</div>
-                <div class="summary-data">
-                    <div class="summary-label">Patrimonio Neto</div>
-                    <div class="summary-value">${fmtMoney(netWorth)}</div>
-                    <div class="summary-trend ${s.patrimonioNeto.changePct >= 0 ? 'positive' : 'negative'}">
-                        ${s.patrimonioNeto.changePct >= 0 ? '▲' : '▼'} ${Math.abs(s.patrimonioNeto.changePct).toFixed(1)}% vs mes anterior
-                    </div>
+    const arrowClass = (val) => val > 0 ? 'up' : 'down';
+    const arrowClassCred = (val) => val > 0 ? 'down' : 'up';
+
+    const summaryHtml = `
+        <div class="patrimonial-col activos">
+            <div class="patrimonial-pct">${pctAssets.toFixed(2)}%</div>
+            <div class="patrimonial-label">ACTIVOS</div>
+            <div class="patrimonial-total">${fmtMoney(totalAssets)}</div>
+            <div class="patrimonial-items">
+                <div class="patrimonial-item ${arrowClass(s.inversionesTotal.change)}">
+                    <span class="amount">${fmtMoney(s.inversionesTotal.change)}</span>
+                    <span class="name">Inversiones</span>
+                    <span class="arrow">${arrow(s.inversionesTotal.change)}</span>
+                </div>
+                <div class="patrimonial-item ${arrowClass(s.liquidoTotal.change)}">
+                    <span class="amount">${fmtMoney(s.liquidoTotal.change)}</span>
+                    <span class="name">Líquido</span>
+                    <span class="arrow">${arrow(s.liquidoTotal.change)}</span>
+                </div>
+                <div class="patrimonial-item ${arrowClass(s.otrosActivos.change)}">
+                    <span class="amount">${fmtMoney(s.otrosActivos.change)}</span>
+                    <span class="name">Otros</span>
+                    <span class="arrow">${arrow(s.otrosActivos.change)}</span>
                 </div>
             </div>
-            <div class="summary-card">
-                <div class="summary-icon">📈</div>
-                <div class="summary-data">
-                    <div class="summary-label">Activos Totales</div>
-                    <div class="summary-value">${fmtMoney(totalAssets)}</div>
-                    <div class="summary-trend ${yoyActivos >= 0 ? 'positive' : 'negative'}">
-                        ${yoyActivos >= 0 ? '▲' : '▼'} ${Math.abs(yoyActivos).toFixed(1)}% YoY
-                    </div>
+        </div>
+        <div class="patrimonial-col patrimonio">
+            <div class="patrimonial-label" style="margin-bottom:4px;">PATRIMONIO</div>
+            <div class="patrimonial-total" style="margin-bottom:18px;">${fmtMoney(netWorth)}</div>
+            <div class="patrimonial-items">
+                <div class="patrimonial-item ${arrowClass(s.patrimonioNeto.change)}">
+                    <span class="amount">${fmtMoney(s.patrimonioNeto.change)}</span>
+                    <span class="name">Neto</span>
+                    <span class="arrow">${arrow(s.patrimonioNeto.change)}</span>
+                </div>
+                <div class="patrimonial-item ${arrowClass(s.activosTotales.change)}">
+                    <span class="amount">${fmtMoney(s.activosTotales.change)}</span>
+                    <span class="name">Activos</span>
+                    <span class="arrow">${arrow(s.activosTotales.change)}</span>
+                </div>
+                <div class="patrimonial-item ${arrowClassCred(s.pasivosTotal.change)}">
+                    <span class="amount">${fmtMoney(s.pasivosTotal.change)}</span>
+                    <span class="name">Pasivos</span>
+                    <span class="arrow">${arrowcred(s.pasivosTotal.change)}</span>
                 </div>
             </div>
-            <div class="summary-card">
-                <div class="summary-icon">📉</div>
-                <div class="summary-data">
-                    <div class="summary-label">Pasivos Totales</div>
-                    <div class="summary-value">${fmtMoney(totalLiab)}</div>
-                    <div class="summary-trend ${yoyPasivos <= 0 ? 'positive' : 'negative'}">
-                        ${yoyPasivos <= 0 ? '▼' : '▲'} ${Math.abs(yoyPasivos).toFixed(1)}% YoY
-                    </div>
+        </div>
+        <div class="patrimonial-col pasivos">
+            <div class="patrimonial-pct">${pctLiab.toFixed(2)}%</div>
+            <div class="patrimonial-label">PASIVOS</div>
+            <div class="patrimonial-total">${fmtMoney(totalLiab)}</div>
+            <div class="patrimonial-items">
+                <div class="patrimonial-item ${arrowClassCred(creditoChange)}">
+                    <span class="amount">${fmtMoney(creditoChange)}</span>
+                    <span class="name">Crédito</span>
+                    <span class="arrow">${arrowcred(creditoChange)}</span>
+                </div>
+                <div class="patrimonial-item ${arrowClassCred(prestamoChange)}">
+                    <span class="amount">${fmtMoney(prestamoChange)}</span>
+                    <span class="name">Préstamos</span>
+                    <span class="arrow">${arrowcred(prestamoChange)}</span>
                 </div>
             </div>
-            <div class="summary-card ${healthCardClass}">
-                <div class="summary-icon">💪</div>
-                <div class="summary-data">
-                    <div class="summary-label">Índice de Salud</div>
-                    <div class="summary-value">${healthScore}%</div>
-                    <div class="summary-trend ${healthScore >= 80 ? 'positive' : healthScore >= 60 ? 'neutral' : 'negative'}">${healthStatus}</div>
-                </div>
-            </div>
-        `;
-        document.getElementById('summaryGrid').innerHTML = summaryHtml;
+        </div>
+    `;
+    const summaryGrid = document.getElementById('summaryGrid');
+    summaryGrid.className = 'patrimonial-grid';
+    summaryGrid.innerHTML = summaryHtml;
 
         // === PODER ADQUISITIVO TOTAL ===
         const CREDIT_LIMIT_TOTAL = getCreditLimitTotal();

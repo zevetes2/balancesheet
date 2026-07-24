@@ -3424,3 +3424,428 @@ document.addEventListener('click', function(e) {
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') closeGastoModal();
 });
+
+// ============================================================================
+// EDITOR DE PRESUPUESTO — Ajuste interactivo de categorías
+// ============================================================================
+
+let budgetEditorData = null;      // Datos originales desde appData
+let budgetWorkingData = null;     // Copia mutable para edición
+let budgetChart = null;
+let budgetPreviewChart = null;
+
+// === INICIALIZACIÓN ===
+function initBudgetEditor() {
+    if (!appData || !appData.presupuesto) return;
+    
+    // Filtrar solo categorías de Gastos del mes actual, nivel principal
+    const mesActual = formatDateToString(new Date());
+    let cats = appData.presupuesto.filter(p => 
+        p.tipo === 'Gastos' && (!p.mesAno || formatDateToString(p.mesAno) === mesActual)
+    );
+    
+    if (cats.length === 0) {
+        cats = appData.presupuesto.filter(p => p.tipo === 'Gastos');
+    }
+    
+    // Agrupar por categoría principal (usando idCategoria)
+    const categorias = appData.categorias || [];
+    const grouped = {};
+    
+    cats.forEach(p => {
+        const cat = categorias.find(c => String(c.id).trim() === String(p.idCategoria).trim());
+        const nombre = cat ? (cat.etiqueta || cat.nombre || 'Cat ' + p.idCategoria) : 'Cat ' + p.idCategoria;
+        const meta = getCatMeta(nombre);
+        
+        // Solo categorías principales (nivel 1 o sin padre en CAT_DB)
+        if (meta.padre) return;
+        
+        if (!grouped[nombre]) {
+            grouped[nombre] = { 
+                id: p.idCategoria, 
+                nombre, 
+                monto: 0, 
+                presupuestado: 0,
+                etiqueta: meta.etiqueta || 'General'
+            };
+        }
+        grouped[nombre].monto += (p.gastoReal || 0);
+        grouped[nombre].presupuestado += (p.montoPresupuestado || 0);
+    });
+    
+    const items = Object.values(grouped).sort((a, b) => b.presupuestado - a.presupuestado);
+    const totalPresupuestado = items.reduce((s, i) => s + i.presupuestado, 0);
+    
+    // Normalizar porcentajes
+    items.forEach(item => {
+        item.pct = totalPresupuestado > 0 ? (item.presupuestado / totalPresupuestado) * 100 : 0;
+        item.nuevoMonto = item.presupuestado;
+        item.nuevoPct = item.pct;
+    });
+    
+    budgetEditorData = { items, total: totalPresupuestado };
+    budgetWorkingData = JSON.parse(JSON.stringify(budgetEditorData));
+    
+    renderBudgetStats();
+    renderBudgetEditor();
+    renderBudgetPreviewChart();
+}
+
+function renderBudgetStats() {
+    const d = budgetWorkingData;
+    const total = d.total;
+    const items = d.items;
+    const totalAsignado = items.reduce((s, i) => s + i.nuevoMonto, 0);
+    const diferencia = total - totalAsignado;
+    
+    const html = `
+        <div class="stat-card" style="border-top:3px solid #3b82f6">
+            <div class="stat-header"><span class="stat-label">Total Presupuesto</span></div>
+            <div class="stat-value">${fmtMoney(total)}</div>
+            <div class="stat-sub">Base para distribución</div>
+        </div>
+        <div class="stat-card" style="border-top:3px solid ${diferencia >= 0 ? '#22c55e' : '#ef4444'}">
+            <div class="stat-header"><span class="stat-label">Por Asignar</span></div>
+            <div class="stat-value" style="color:${diferencia >= 0 ? '#4ade80' : '#f87171'}">${fmtMoney(Math.abs(diferencia))}</div>
+            <div class="stat-sub">${diferencia >= 0 ? 'Disponible' : 'Excedido'} para distribuir</div>
+        </div>
+        <div class="stat-card" style="border-top:3px solid #8b5cf6">
+            <div class="stat-header"><span class="stat-label">Categorías</span></div>
+            <div class="stat-value">${items.length}</div>
+            <div class="stat-sub">Categorías principales</div>
+        </div>
+        <div class="stat-card" style="border-top:3px solid #f59e0b">
+            <div class="stat-header"><span class="stat-label">Mayor Gasto</span></div>
+            <div class="stat-value">${fmtMoney(Math.max(...items.map(i => i.monto)))}</div>
+            <div class="stat-sub">Gasto real más alto</div>
+        </div>
+    `;
+    document.getElementById('budgetStats').innerHTML = html;
+    document.getElementById('budgetTotalDisplay').textContent = fmtMoney(total);
+    document.getElementById('budgetTotalInput').value = fmtMoney(total).replace('RD$', '').trim();
+}
+
+function renderBudgetEditor() {
+    const container = document.getElementById('budgetCategoriesList');
+    const d = budgetWorkingData;
+    const total = d.total;
+    const maxVal = Math.max(...d.items.map(i => i.nuevoMonto), 1);
+    
+    let html = '';
+    d.items.forEach((item, idx) => {
+        const color = getEtiquetaColor(item.etiqueta);
+        const pct = total > 0 ? (item.nuevoMonto / total) * 100 : 0;
+        const barWidth = Math.min(100, (item.nuevoMonto / maxVal) * 100);
+        const diff = item.nuevoMonto - item.presupuestado;
+        const diffColor = diff > 0 ? '#f87171' : diff < 0 ? '#4ade80' : '#94a3b8';
+        const diffIcon = diff > 0 ? '▲' : diff < 0 ? '▼' : '—';
+        
+        html += `
+        <div class="budget-row" data-idx="${idx}">
+            <div class="budget-info">
+                <div class="budget-color" style="background:${color}"></div>
+                <div class="budget-name">${item.nombre}</div>
+                <div class="budget-current">Actual: ${fmtMoney(item.presupuestado)}</div>
+            </div>
+            
+            <div class="budget-controls">
+                <div class="budget-slider-wrap">
+                    <input type="range" class="budget-slider" min="0" max="${total}" step="100" 
+                        value="${Math.round(item.nuevoMonto)}" 
+                        oninput="onBudgetSlider(${idx}, this.value)"
+                        style="--track-color:${color}40; --fill-color:${color}">
+                    <div class="budget-slider-tooltip" id="tooltip-${idx}">${fmtMoney(item.nuevoMonto)}</div>
+                </div>
+                
+                <div class="budget-inputs">
+                    <div class="budget-input-group">
+                        <span class="budget-input-prefix">RD$</span>
+                        <input type="number" class="budget-input" value="${Math.round(item.nuevoMonto)}" 
+                            onchange="onBudgetAmount(${idx}, this.value)" step="100">
+                    </div>
+                    <div class="budget-input-group pct">
+                        <input type="number" class="budget-input" value="${pct.toFixed(2)}" 
+                            onchange="onBudgetPct(${idx}, this.value)" step="0.1" min="0" max="100">
+                        <span class="budget-input-suffix">%</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="budget-diff" style="color:${diffColor}">
+                ${diffIcon} ${fmtMoney(Math.abs(diff))}
+            </div>
+        </div>
+        `;
+    });
+    
+    container.innerHTML = html;
+    updateBudgetValidation();
+}
+
+function updateBudgetValidation() {
+    const d = budgetWorkingData;
+    const total = d.total;
+    const asignado = d.items.reduce((s, i) => s + i.nuevoMonto, 0);
+    const pct = total > 0 ? (asignado / total) * 100 : 0;
+    const diff = total - asignado;
+    
+    const fill = document.getElementById('budgetValidationFill');
+    const text = document.getElementById('budgetValidationText');
+    
+    fill.style.width = Math.min(100, pct) + '%';
+    fill.style.background = diff === 0 ? '#22c55e' : diff > 0 ? '#f59e0b' : '#ef4444';
+    
+    if (diff === 0) {
+        text.innerHTML = `✅ Suma: <strong>${pct.toFixed(1)}%</strong> · Perfecto`;
+        text.style.color = '#4ade80';
+    } else if (diff > 0) {
+        text.innerHTML = `⚠️ Suma: <strong>${pct.toFixed(1)}%</strong> · Faltan ${fmtMoney(diff)}`;
+        text.style.color = '#fbbf24';
+    } else {
+        text.innerHTML = `🔴 Suma: <strong>${pct.toFixed(1)}%</strong> · Excedido en ${fmtMoney(Math.abs(diff))}`;
+        text.style.color = '#f87171';
+    }
+}
+
+// === HANDLERS ===
+function onTotalChange(val) {
+    const clean = parseFloat(val.replace(/[^\d.-]/g, ''));
+    if (!isNaN(clean) && clean > 0) {
+        budgetWorkingData.total = clean;
+        // Recalcular montos basado en % actuales
+        budgetWorkingData.items.forEach(item => {
+            item.nuevoMonto = (item.nuevoPct / 100) * clean;
+        });
+        renderBudgetStats();
+        renderBudgetEditor();
+        renderBudgetPreviewChart();
+    }
+}
+
+function onBudgetSlider(idx, val) {
+    const num = parseFloat(val) || 0;
+    budgetWorkingData.items[idx].nuevoMonto = num;
+    budgetWorkingData.items[idx].nuevoPct = budgetWorkingData.total > 0 
+        ? (num / budgetWorkingData.total) * 100 
+        : 0;
+    
+    // Actualizar input numérico y %
+    const row = document.querySelector(`.budget-row[data-idx="${idx}"]`);
+    row.querySelector('.budget-input').value = Math.round(num);
+    row.querySelector('.budget-input-group.pct input').value = budgetWorkingData.items[idx].nuevoPct.toFixed(2);
+    
+    // Tooltip
+    const tooltip = document.getElementById(`tooltip-${idx}`);
+    if (tooltip) tooltip.textContent = fmtMoney(num);
+    
+    updateBudgetDiff(idx);
+    updateBudgetValidation();
+    updateBudgetPreviewChart();
+}
+
+function onBudgetAmount(idx, val) {
+    onBudgetSlider(idx, val);
+}
+
+function onBudgetPct(idx, val) {
+    const pct = parseFloat(val) || 0;
+    const monto = (pct / 100) * budgetWorkingData.total;
+    onBudgetSlider(idx, monto);
+}
+
+function updateBudgetDiff(idx) {
+    const item = budgetWorkingData.items[idx];
+    const diff = item.nuevoMonto - item.presupuestado;
+    const diffColor = diff > 0 ? '#f87171' : diff < 0 ? '#4ade80' : '#94a3b8';
+    const diffIcon = diff > 0 ? '▲' : diff < 0 ? '▼' : '—';
+    
+    const row = document.querySelector(`.budget-row[data-idx="${idx}"]`);
+    const diffEl = row.querySelector('.budget-diff');
+    diffEl.style.color = diffColor;
+    diffEl.textContent = `${diffIcon} ${fmtMoney(Math.abs(diff))}`;
+}
+
+function resetBudget() {
+    budgetWorkingData = JSON.parse(JSON.stringify(budgetEditorData));
+    renderBudgetStats();
+    renderBudgetEditor();
+    renderBudgetPreviewChart();
+}
+
+function balanceBudget() {
+    // Distribuir el total restante proporcionalmente entre las categorías
+    const d = budgetWorkingData;
+    const totalAsignado = d.items.reduce((s, i) => s + i.nuevoMonto, 0);
+    const restante = d.total - totalAsignado;
+    
+    if (restante <= 0) return;
+    
+    // Dar más al que tiene menor % actual (ayuda a balancear)
+    const factor = restante / totalAsignado;
+    d.items.forEach(item => {
+        item.nuevoMonto += item.nuevoMonto * factor;
+        item.nuevoPct = (item.nuevoMonto / d.total) * 100;
+    });
+    
+    renderBudgetEditor();
+    renderBudgetPreviewChart();
+}
+
+// === CHART PREVIEW ===
+function renderBudgetPreviewChart() {
+    const ctx = getCanvas('budgetPreviewChart');
+    if (!ctx) return;
+    
+    if (budgetPreviewChart) {
+        budgetPreviewChart.destroy();
+        budgetPreviewChart = null;
+    }
+    
+    const labels = budgetWorkingData.items.map(i => i.nombre);
+    const actual = budgetWorkingData.items.map(i => i.presupuestado);
+    const nuevo = budgetWorkingData.items.map(i => i.nuevoMonto);
+    
+    budgetPreviewChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [
+                {
+                    label: 'Actual',
+                    data: actual,
+                    backgroundColor: 'rgba(148,163,184,0.4)',
+                    borderRadius: 4,
+                    barPercentage: 0.6,
+                    categoryPercentage: 0.8
+                },
+                {
+                    label: 'Nuevo',
+                    data: nuevo,
+                    backgroundColor: budgetWorkingData.items.map(i => getEtiquetaColor(i.etiqueta)),
+                    borderRadius: 4,
+                    barPercentage: 0.6,
+                    categoryPercentage: 0.8
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'top',
+                    align: 'end',
+                    labels: { color: '#94a3b8', font: { size: 11 }, usePointStyle: true }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(15,23,42,0.95)',
+                    titleColor: '#e2e8f0', bodyColor: '#e2e8f0',
+                    borderColor: 'rgba(51,65,85,0.5)', borderWidth: 1,
+                    callbacks: {
+                        label: (c) => c.dataset.label + ': ' + fmtMoney(c.parsed.y)
+                    }
+                }
+            },
+            scales: {
+                x: { 
+                    grid: { display: false }, 
+                    ticks: { color: '#64748b', font: { size: 10 }, maxRotation: 45 } 
+                },
+                y: { 
+                    grid: { color: 'rgba(51,65,85,0.2)' }, 
+                    ticks: { 
+                        color: '#64748b', font: { size: 10 }, 
+                        callback: (v) => 'RD$' + (v/1000).toFixed(0) + 'K' 
+                    } 
+                }
+            }
+        }
+    });
+}
+
+function updateBudgetPreviewChart() {
+    if (!budgetPreviewChart) return;
+    budgetPreviewChart.data.datasets[1].data = budgetWorkingData.items.map(i => i.nuevoMonto);
+    budgetPreviewChart.update('none');
+}
+
+// === GUARDAR EN SHEETS ===
+function saveBudget() {
+    const d = budgetWorkingData;
+    const totalAsignado = d.items.reduce((s, i) => s + i.nuevoMonto, 0);
+    const diff = d.total - totalAsignado;
+    
+    if (Math.abs(diff) > 1) {
+        alert(`⚠️ La suma de categorías (${fmtMoney(totalAsignado)}) no coincide con el total (${fmtMoney(d.total)}). Diferencia: ${fmtMoney(diff)}`);
+        return;
+    }
+    
+    const btn = document.getElementById('saveBudgetBtn');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '⏳ Guardando...';
+    btn.disabled = true;
+    
+    // Preparar payload
+    const payload = {
+        total: d.total,
+        categorias: d.items.map(i => ({
+            id: i.id,
+            nombre: i.nombre,
+            monto: Math.round(i.nuevoMonto),
+            pct: parseFloat(i.nuevoPct.toFixed(2))
+        }))
+    };
+    
+    // Enviar vía JSONP (GET) — el backend debe manejar action=updateBudget
+    const callbackName = 'budgetSaveCallback_' + Date.now();
+    const script = document.createElement('script');
+    const timeout = setTimeout(() => {
+        alert('❌ Timeout guardando presupuesto');
+        cleanup();
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }, 30000);
+    
+    function cleanup() {
+        if (script.parentNode) script.parentNode.removeChild(script);
+        delete window[callbackName];
+        clearTimeout(timeout);
+    }
+    
+    window[callbackName] = (res) => {
+        cleanup();
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+        
+        if (res && res.success) {
+            alert('✅ Presupuesto guardado correctamente en Sheets');
+            // Refrescar datos
+            refreshData();
+        } else {
+            alert('❌ Error: ' + (res?.message || 'No se pudo guardar'));
+        }
+    };
+    
+    script.onerror = () => {
+        cleanup();
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+        alert('❌ Error de red al guardar');
+    };
+    
+    // Serializar payload para URL (GET)
+    const jsonPayload = encodeURIComponent(JSON.stringify(payload));
+    const url = CONFI.API_URL + '?action=updateBudget&data=' + jsonPayload + '&callback=' + callbackName;
+    
+    script.src = url;
+    document.head.appendChild(script);
+}
+
+// Hook para inicializar cuando se abre el tab
+const originalSwitchTab = switchTab;
+switchTab = function(tabId) {
+    originalSwitchTab(tabId);
+    if (tabId === 'budget') {
+        setTimeout(initBudgetEditor, 100);
+    }
+};

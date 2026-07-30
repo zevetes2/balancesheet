@@ -2847,7 +2847,7 @@ function getCatMeta(nombre) {
 }
 
 function getEtiquetaColor(etiqueta) {
-  return ETIQUETA_COLORS[etiqueta] || '#64748b';
+  return ETIQUETA_COLORS[etiqueta] || '#ff1744';
 }
 
 // === HELPERS DE FILTRADO ===
@@ -3426,75 +3426,104 @@ document.addEventListener('keydown', function(e) {
 });
 
 // ============================================================================
-// EDITOR DE PRESUPUESTO — Ajuste interactivo de categorías
+// EDITOR DE PRESUPUESTO — Ingresos definen el total disponible para Gastos
 // ============================================================================
+
+const INGRESOS_ACTIVO_IDS = ['14.1', '14.2', '14.4', '15', '16.1', '16.2', '16.3', '16.4', '17', '18', '19', '20', '22', '24'];
+const INGRESOS_EXCLUIR_IDS = ['14', '16','23','21'];
+const GASTOS_EXCLUIR_IDS = ['1','2'];
 
 let budgetEditorData = null;
 let budgetWorkingData = null;
-let budgetChart = null;
+let budgetFilter = 'gastos';
 let budgetPreviewChart = null;
 
+function getPresupuestoTipo(p) {
+    const cleanId = String(p.id).replace(/^P/i, '');
+    if (GASTOS_EXCLUIR_IDS.includes(cleanId)) return 'excluir';
+    if (INGRESOS_EXCLUIR_IDS.includes(cleanId)) return 'excluir';
+    if (INGRESOS_ACTIVO_IDS.includes(cleanId)) return 'ingresos_activo';
+    if (p.tipo === 'Ingresos') return 'ingresos_otro';
+    return 'gastos';
+}
 // === INICIALIZACIÓN ===
 function initBudgetEditor() {
     if (!appData || !appData.presupuesto) return;
     
-    // Filtrar solo categorías de Gastos del mes actual, nivel principal
-    const mesActual = formatDateToString(new Date());
-    let cats = appData.presupuesto.filter(p => 
-        p.tipo === 'Gastos' && (!p.mesAno || formatDateToString(p.mesAno) === mesActual)
-    );
-    
-    if (cats.length === 0) {
-        cats = appData.presupuesto.filter(p => p.tipo === 'Gastos');
-    }
-    
-    // Agrupar por categoría principal (usando idCategoria)
     const categorias = appData.categorias || [];
-    const grouped = {};
+    const presupuesto = appData.presupuesto || [];
+    const mesActual = formatDateToString(new Date());
     
-    cats.forEach(p => {
-        const cat = categorias.find(c => String(c.id).trim() === String(p.idCategoria).trim());
-        const nombre = cat ? (cat.etiqueta || cat.nombre || 'Cat ' + p.idCategoria) : 'Cat ' + p.idCategoria;
-        const meta = getCatMeta(nombre);
+    function procesarTipo(tipoFiltro) {
+        let cats = presupuesto.filter(p => {
+            const pTipo = getPresupuestoTipo(p);
+            if (pTipo === 'excluir') return false;
+            if (tipoFiltro === 'gastos') return pTipo === 'gastos';
+            return pTipo.startsWith('ingresos');
+        }).filter(p => !p.mesAno || formatDateToString(p.mesAno) === mesActual);
         
-        // Solo categorías principales (nivel 1 o sin padre en CAT_DB)
-        if (meta.padre) return;
-        
-        if (!grouped[nombre]) {
-            grouped[nombre] = { 
-                id: p.idCategoria, 
-                nombre, 
-                monto: 0, 
-                presupuestado: 0,
-                etiqueta: meta.etiqueta || 'General',
-                gastoReal: 0  // ← NUEVO
-            };
+        if (cats.length === 0) {
+            cats = presupuesto.filter(p => {
+                const pTipo = getPresupuestoTipo(p);
+                if (pTipo === 'excluir') return false;
+                if (tipoFiltro === 'gastos') return pTipo === 'gastos';
+                return pTipo.startsWith('ingresos');
+            });
         }
-        grouped[nombre].monto += (p.gastoReal || 0);
-        grouped[nombre].presupuestado += (p.montoPresupuestado || 0);
-        grouped[nombre].gastoReal += (p.gastoReal || 0);  // ← NUEVO
-    });
-    
-    // Si no hay datos en presupuesto, intentar con appData.gastos (resumen)
-    if (appData.gastos) {
-        Object.entries(appData.gastos).forEach(([nombre, data]) => {
-            if (grouped[nombre]) {
-                grouped[nombre].gastoReal = data.current || grouped[nombre].gastoReal;
+        
+        const grouped = {};
+        cats.forEach(p => {
+            const cat = categorias.find(c => String(c.id).trim() === String(p.id).trim().replace(/^P/i, ''));
+            const nombre = cat ? (cat.nombre || cat.etiqueta) : 
+                           (categorias.find(c => String(c.id).trim() === String(p.idCategoria).trim())?.nombre || 
+                            'Item ' + p.id);
+            const meta = getCatMeta(nombre);
+            const cleanId = String(p.id).replace(/^P/i, '');
+            const key = tipoFiltro === 'ingresos' ? (nombre + '|' + cleanId) : nombre;
+            
+            if (!grouped[key]) {
+                grouped[key] = { 
+                    id: p.id,
+                    idCategoria: p.idCategoria,
+                    nombre, 
+                    presupuestado: 0,
+                    real: 0,
+                    etiqueta: meta.etiqueta || 'General',
+                    tipo: tipoFiltro,
+                    ids: []
+                };
             }
+            grouped[key].presupuestado += (p.montoPresupuestado || 0);
+            grouped[key].real += (p.gastoReal || 0);
+            grouped[key].ids.push(p.id);
         });
+        
+        if (tipoFiltro === 'gastos' && appData.gastos) {
+            Object.entries(appData.gastos).forEach(([nombre, data]) => {
+                if (grouped[nombre]) grouped[nombre].real = data.current || grouped[nombre].real;
+            });
+        }
+        
+        const items = Object.values(grouped).sort((a, b) => b.presupuestado - a.presupuestado);
+        const total = items.reduce((s, i) => s + i.presupuestado, 0);
+        
+        items.forEach(item => {
+            item.pct = total > 0 ? (item.presupuestado / total) * 100 : 0;
+            item.nuevoMonto = item.presupuestado;
+            item.nuevoPct = item.pct;
+        });
+        
+        return { items, total };
     }
     
-    const items = Object.values(grouped).sort((a, b) => b.presupuestado - a.presupuestado);
-    const totalPresupuestado = items.reduce((s, i) => s + i.presupuestado, 0);
+    budgetEditorData = {
+        gastos: procesarTipo('gastos'),
+        ingresos: procesarTipo('ingresos')
+    };
     
-    // Normalizar porcentajes
-    items.forEach(item => {
-        item.pct = totalPresupuestado > 0 ? (item.presupuestado / totalPresupuestado) * 100 : 0;
-        item.nuevoMonto = item.presupuestado;
-        item.nuevoPct = item.pct;
-    });
+    // ← NUEVO: Sincronizar total de gastos con ingresos al inicio
+    syncGastosTotalWithIngresos();
     
-    budgetEditorData = { items, total: totalPresupuestado };
     budgetWorkingData = JSON.parse(JSON.stringify(budgetEditorData));
     
     renderBudgetStats();
@@ -3502,65 +3531,142 @@ function initBudgetEditor() {
     renderBudgetPreviewChart();
 }
 
+// ← NUEVO: Sincronizar total de gastos con suma de ingresos
+function syncGastosTotalWithIngresos() {
+    const totalIngresos = budgetEditorData.ingresos.items.reduce((s, i) => s + i.nuevoMonto, 0);
+    budgetEditorData.gastos.total = totalIngresos;
+    
+    // Recalcular % de gastos basado en nuevo total
+    budgetEditorData.gastos.items.forEach(item => {
+        item.pct = totalIngresos > 0 ? (item.presupuestado / totalIngresos) * 100 : 0;
+        item.nuevoPct = item.pct;
+    });
+}
+
+function getActiveBudgetGroup() {
+    return budgetWorkingData[budgetFilter];
+}
+
+// ← NUEVO: Obtener total de ingresos del working data
+function getTotalIngresos() {
+    return budgetWorkingData.ingresos.items.reduce((s, i) => s + i.nuevoMonto, 0);
+}
+
 function renderBudgetStats() {
-    const d = budgetWorkingData;
-    const total = d.total;
-    const items = d.items;
+    const group = getActiveBudgetGroup();
+    const isGasto = budgetFilter === 'gastos';
+    const items = group.items;
     const totalAsignado = items.reduce((s, i) => s + i.nuevoMonto, 0);
-    const diferencia = total - totalAsignado;
+    const totalOriginal = items.reduce((s, i) => s + i.presupuestado, 0);
+    const totalReal = items.reduce((s, i) => s + (i.real || 0), 0);
+    const totalIngresos = getTotalIngresos();
     
-    // Calcular totales de referencia
-    const totalGastoReal = items.reduce((s, i) => s + (i.gastoReal || 0), 0);
-    const totalPresupuestadoOriginal = items.reduce((s, i) => s + i.presupuestado, 0);
+    let html;
+    if (isGasto) {
+        const diferencia = group.total - totalAsignado;
+        html = `
+            <div class="stat-card" style="border-top:3px solid #3b82f6">
+                <div class="stat-header"><span class="stat-label">Total Presupuesto</span></div>
+                <div class="stat-value">${fmtMoney(group.total)}</div>
+                <div class="stat-sub">= Ingresos totales: ${fmtMoney(totalIngresos)}</div>
+            </div>
+            <div class="stat-card" style="border-top:3px solid ${diferencia >= 0 ? '#22c55e' : '#ef4444'}">
+                <div class="stat-header"><span class="stat-label">Por Asignar</span></div>
+                <div class="stat-value" style="color:${diferencia >= 0 ? '#4ade80' : '#f87171'}">${fmtMoney(Math.abs(diferencia))}</div>
+                <div class="stat-sub">${diferencia >= 0 ? 'Disponible' : 'Excedido'} para gastos</div>
+            </div>
+            <div class="stat-card" style="border-top:3px solid #f59e0b">
+                <div class="stat-header"><span class="stat-label">Gasto Real</span></div>
+                <div class="stat-value" style="color:#fbbf24">${fmtMoney(totalReal)}</div>
+                <div class="stat-sub">vs ${fmtMoney(totalOriginal)} presupuestado</div>
+            </div>
+            <div class="stat-card" style="border-top:3px solid #8b5cf6">
+                <div class="stat-header"><span class="stat-label">Categorías</span></div>
+                <div class="stat-value">${items.length}</div>
+                <div class="stat-sub">Categorías de gasto</div>
+            </div>
+        `;
+    } else {
+        html = `
+            <div class="stat-card" style="border-top:3px solid #22c55e">
+                <div class="stat-header"><span class="stat-label">Ingreso Total</span></div>
+                <div class="stat-value" style="color:#4ade80">${fmtMoney(totalAsignado)}</div>
+                <div class="stat-sub">Define el presupuesto de gastos</div>
+            </div>
+            <div class="stat-card" style="border-top:3px solid #3b82f6">
+                <div class="stat-header"><span class="stat-label">Ingreso Real</span></div>
+                <div class="stat-value">${fmtMoney(totalReal)}</div>
+                <div class="stat-sub">vs ${fmtMoney(totalOriginal)} presupuestado anterior</div>
+            </div>
+            <div class="stat-card" style="border-top:3px solid #f59e0b">
+                <div class="stat-header"><span class="stat-label">Variación</span></div>
+                <div class="stat-value" style="color:${totalAsignado >= totalOriginal ? '#4ade80' : '#f87171'}">
+                    ${totalAsignado >= totalOriginal ? '+' : ''}${fmtMoney(totalAsignado - totalOriginal)}
+                </div>
+                <div class="stat-sub">Nuevo vs presupuesto anterior</div>
+            </div>
+            <div class="stat-card" style="border-top:3px solid #8b5cf6">
+                <div class="stat-header"><span class="stat-label">Fuentes</span></div>
+                <div class="stat-value">${items.length}</div>
+                <div class="stat-sub">Fuentes de ingreso</div>
+            </div>
+        `;
+    }
     
-    const html = `
-        <div class="stat-card" style="border-top:3px solid #3b82f6">
-            <div class="stat-header"><span class="stat-label">Total Presupuesto</span></div>
-            <div class="stat-value">${fmtMoney(total)}</div>
-            <div class="stat-sub">Base para distribución</div>
-        </div>
-        <div class="stat-card" style="border-top:3px solid ${diferencia >= 0 ? '#22c55e' : '#ef4444'}">
-            <div class="stat-header"><span class="stat-label">Por Asignar</span></div>
-            <div class="stat-value" style="color:${diferencia >= 0 ? '#4ade80' : '#f87171'}">${fmtMoney(Math.abs(diferencia))}</div>
-            <div class="stat-sub">${diferencia >= 0 ? 'Disponible' : 'Excedido'} para distribuir</div>
-        </div>
-        <div class="stat-card" style="border-top:3px solid #f59e0b">
-            <div class="stat-header"><span class="stat-label">Gasto Real Actual</span></div>
-            <div class="stat-value" style="color:#fbbf24">${fmtMoney(totalGastoReal)}</div>
-            <div class="stat-sub">vs ${fmtMoney(totalPresupuestadoOriginal)} presupuestado</div>
-        </div>
-        <div class="stat-card" style="border-top:3px solid #8b5cf6">
-            <div class="stat-header"><span class="stat-label">Categorías</span></div>
-            <div class="stat-value">${items.length}</div>
-            <div class="stat-sub">Categorías principales</div>
-        </div>
-    `;
     document.getElementById('budgetStats').innerHTML = html;
-    document.getElementById('budgetTotalDisplay').textContent = fmtMoney(total);
-    document.getElementById('budgetTotalInput').value = fmtMoney(total).replace('RD$', '').trim();
+    document.getElementById('budgetTotalDisplay').textContent = isGasto ? fmtMoney(group.total) : fmtMoney(totalAsignado);
+    document.getElementById('budgetTotalInput').value = isGasto 
+        ? fmtMoney(group.total).replace('RD$', '').trim()
+        : fmtMoney(totalAsignado).replace('RD$', '').trim();
 }
 
 function renderBudgetEditor() {
     const container = document.getElementById('budgetCategoriesList');
-    const d = budgetWorkingData;
-    const total = d.total;
-    const maxVal = Math.max(...d.items.map(i => Math.max(i.nuevoMonto, i.gastoReal || 0)), 1);
+    const group = getActiveBudgetGroup();
+    const isGasto = budgetFilter === 'gastos';
+    const maxVal = Math.max(...group.items.map(i => Math.max(i.nuevoMonto, i.real || 0)), 1);
     
-    let html = '';
-    d.items.forEach((item, idx) => {
+    const filterHtml = `
+        <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
+            <button onclick="setBudgetFilter('gastos')" class="db-filter-btn ${budgetFilter === 'gastos' ? 'active' : ''}" data-filter="gastos">🔴 Gastos</button>
+            <button onclick="setBudgetFilter('ingresos')" class="db-filter-btn ${budgetFilter === 'ingresos' ? 'active' : ''}" data-filter="ingresos">🟢 Ingresos</button>
+            <span style="margin-left:auto;font-size:12px;color:#64748b;font-weight:600;align-self:center;">
+                Editando: <span style="color:${isGasto ? '#f87171' : '#4ade80'}">${isGasto ? 'Gastos' : 'Ingresos'}</span>
+            </span>
+        </div>
+    `;
+    
+    const validationHtml = isGasto ? `
+        <div class="budget-validation" id="budgetValidation">
+            <span id="budgetValidationText">Suma: 100%</span>
+            <div class="budget-validation-bar">
+                <div class="budget-validation-fill" id="budgetValidationFill" style="width:100%"></div>
+            </div>
+        </div>
+    ` : `
+        <div class="budget-validation" id="budgetValidation" style="background:rgba(34,197,94,0.1);border-color:rgba(34,197,94,0.2);">
+            <span id="budgetValidationText" style="color:#4ade80;">✅ Ingresos — El total define el presupuesto de gastos</span>
+        </div>
+    `;
+    
+    let html = filterHtml + validationHtml;
+    
+    group.items.forEach((item, idx) => {
         const color = getEtiquetaColor(item.etiqueta);
-        const pct = total > 0 ? (item.nuevoMonto / total) * 100 : 0;
-        const barWidth = Math.min(100, (item.nuevoMonto / maxVal) * 100);
+        const pct = isGasto && group.total > 0 ? (item.nuevoMonto / group.total) * 100 : 0;
         const diff = item.nuevoMonto - item.presupuestado;
-        const diffColor = diff > 0 ? '#f87171' : diff < 0 ? '#4ade80' : '#94a3b8';
+        const diffColor = isGasto
+            ? (diff > 0 ? '#f87171' : diff < 0 ? '#4ade80' : '#94a3b8')
+            : (diff > 0 ? '#4ade80' : diff < 0 ? '#f87171' : '#94a3b8');
         const diffIcon = diff > 0 ? '▲' : diff < 0 ? '▼' : '—';
         
-        // ← NUEVO: Referencia gasto real
-        const gastoReal = item.gastoReal || 0;
-        const vsReal = item.nuevoMonto - gastoReal;
+        const real = item.real || 0;
+        const vsReal = item.nuevoMonto - real;
         const vsRealColor = vsReal >= 0 ? '#4ade80' : '#f87171';
         const vsRealIcon = vsReal >= 0 ? '✓' : '⚠';
-        const gastoPct = total > 0 ? (gastoReal / total) * 100 : 0;
+        const realLabel = isGasto ? '🧾 Gasto real' : '💵 Ingreso real';
+        
+        const sliderMax = isGasto ? group.total : Math.max(item.nuevoMonto * 2, 100000);
         
         html += `
         <div class="budget-row" data-idx="${idx}">
@@ -3572,21 +3678,20 @@ function renderBudgetEditor() {
             
             <div class="budget-controls">
                 <div class="budget-slider-wrap">
-                    <input type="range" class="budget-slider" min="0" max="${total}" step="100" 
+                    <input type="range" class="budget-slider" min="0" max="${sliderMax}" step="100" 
                         value="${Math.round(item.nuevoMonto)}" 
                         oninput="onBudgetSlider(${idx}, this.value)"
                         style="--track-color:${color}40; --fill-color:${color}">
                     <div class="budget-slider-tooltip" id="tooltip-${idx}">${fmtMoney(item.nuevoMonto)}</div>
                 </div>
                 
-                <!-- Barra comparativa: Presupuestado vs Gasto Real -->
                 <div class="budget-compare-bar">
                     <div class="budget-compare-track">
-                        <div class="budget-compare-real" style="width:${Math.min(100, (gastoReal / maxVal) * 100)}%;background:#64748b"></div>
+                        <div class="budget-compare-real" style="width:${Math.min(100, (real / maxVal) * 100)}%;background:#64748b"></div>
                         <div class="budget-compare-new" style="width:${Math.min(100, (item.nuevoMonto / maxVal) * 100)}%;background:${color}"></div>
                     </div>
                     <div class="budget-compare-labels">
-                        <span style="color:#64748b">🧾 Gasto real: ${fmtMoney(gastoReal)} (${gastoPct.toFixed(1)}%)</span>
+                        <span style="color:#64748b">${realLabel}: ${fmtMoney(real)}</span>
                         <span style="color:${vsRealColor};font-weight:700">${vsRealIcon} ${vsReal >= 0 ? '+' : ''}${fmtMoney(vsReal)} vs real</span>
                     </div>
                 </div>
@@ -3597,11 +3702,13 @@ function renderBudgetEditor() {
                         <input type="number" class="budget-input" value="${Math.round(item.nuevoMonto)}" 
                             onchange="onBudgetAmount(${idx}, this.value)" step="100">
                     </div>
+                    ${isGasto ? `
                     <div class="budget-input-group pct">
                         <input type="number" class="budget-input" value="${pct.toFixed(2)}" 
                             onchange="onBudgetPct(${idx}, this.value)" step="0.1" min="0" max="100">
                         <span class="budget-input-suffix">%</span>
                     </div>
+                    ` : ''}
                 </div>
             </div>
             
@@ -3613,18 +3720,27 @@ function renderBudgetEditor() {
     });
     
     container.innerHTML = html;
-    updateBudgetValidation();
+    if (isGasto) updateBudgetValidation();
+}
+
+function setBudgetFilter(tipo) {
+    budgetFilter = tipo;
+    renderBudgetStats();
+    renderBudgetEditor();
+    renderBudgetPreviewChart();
 }
 
 function updateBudgetValidation() {
-    const d = budgetWorkingData;
-    const total = d.total;
-    const asignado = d.items.reduce((s, i) => s + i.nuevoMonto, 0);
+    const group = getActiveBudgetGroup();
+    const total = group.total;
+    const asignado = group.items.reduce((s, i) => s + i.nuevoMonto, 0);
     const pct = total > 0 ? (asignado / total) * 100 : 0;
     const diff = total - asignado;
     
     const fill = document.getElementById('budgetValidationFill');
     const text = document.getElementById('budgetValidationText');
+    
+    if (!fill || !text) return;
     
     fill.style.width = Math.min(100, pct) + '%';
     fill.style.background = diff === 0 ? '#22c55e' : diff > 0 ? '#f59e0b' : '#ef4444';
@@ -3642,74 +3758,116 @@ function updateBudgetValidation() {
 }
 
 // === HANDLERS ===
+
 function onTotalChange(val) {
     const clean = parseFloat(val.replace(/[^\d.-]/g, ''));
-    if (!isNaN(clean) && clean > 0) {
-        budgetWorkingData.total = clean;
-        budgetWorkingData.items.forEach(item => {
-            item.nuevoMonto = (item.nuevoPct / 100) * clean;
-        });
-        renderBudgetStats();
-        renderBudgetEditor();
-        renderBudgetPreviewChart();
+    if (isNaN(clean) || clean < 0) return;
+    
+    const isGasto = budgetFilter === 'gastos';
+    
+    if (isGasto) {
+        // Gastos: total viene de ingresos, no editable directamente
+        // Solo recalcular proporcionalmente si cambian ingresos
+    } else {
+        // Ingresos: no hay total fijo
     }
+    
+    renderBudgetStats();
+    renderBudgetEditor();
+    renderBudgetPreviewChart();
 }
 
 function onBudgetSlider(idx, val) {
     const num = parseFloat(val) || 0;
-    budgetWorkingData.items[idx].nuevoMonto = num;
-    budgetWorkingData.items[idx].nuevoPct = budgetWorkingData.total > 0 
-        ? (num / budgetWorkingData.total) * 100 
-        : 0;
+    const group = getActiveBudgetGroup();
+    const item = group.items[idx];
+    const isGasto = budgetFilter === 'gastos';
+    
+    item.nuevoMonto = num;
+    
+    if (isGasto) {
+        item.nuevoPct = group.total > 0 ? (num / group.total) * 100 : 0;
+    } else {
+        // Ingresos: recalcular % informativo
+        const totalIngresos = group.items.reduce((s, i) => s + i.nuevoMonto, 0);
+        item.nuevoPct = totalIngresos > 0 ? (num / totalIngresos) * 100 : 0;
+    }
     
     const row = document.querySelector(`.budget-row[data-idx="${idx}"]`);
     row.querySelector('.budget-input').value = Math.round(num);
-    row.querySelector('.budget-input-group.pct input').value = budgetWorkingData.items[idx].nuevoPct.toFixed(2);
     
-    // Actualizar tooltip
+    const pctInput = row.querySelector('.budget-input-group.pct input');
+    if (pctInput) pctInput.value = item.nuevoPct.toFixed(2);
+    
     const tooltip = document.getElementById(`tooltip-${idx}`);
     if (tooltip) tooltip.textContent = fmtMoney(num);
     
     // Actualizar barra comparativa
-    const item = budgetWorkingData.items[idx];
-    const gastoReal = item.gastoReal || 0;
-    const maxVal = Math.max(...budgetWorkingData.items.map(i => Math.max(i.nuevoMonto, i.gastoReal || 0)), 1);
-    const vsReal = num - gastoReal;
+    const real = item.real || 0;
+    const maxVal = Math.max(...group.items.map(i => Math.max(i.nuevoMonto, i.real || 0)), 1);
+    const vsReal = num - real;
     const vsRealColor = vsReal >= 0 ? '#4ade80' : '#f87171';
     const vsRealIcon = vsReal >= 0 ? '✓' : '⚠';
+    const realLabel = isGasto ? '🧾 Gasto real' : '💵 Ingreso real';
     
     const compareLabels = row.querySelector('.budget-compare-labels');
     if (compareLabels) {
         compareLabels.innerHTML = `
-            <span style="color:#64748b">🧾 Gasto real: ${fmtMoney(gastoReal)}</span>
+            <span style="color:#64748b">${realLabel}: ${fmtMoney(real)}</span>
             <span style="color:${vsRealColor};font-weight:700">${vsRealIcon} ${vsReal >= 0 ? '+' : ''}${fmtMoney(vsReal)} vs real</span>
         `;
     }
     
     const compareNew = row.querySelector('.budget-compare-new');
-    if (compareNew) {
-        compareNew.style.width = Math.min(100, (num / maxVal) * 100) + '%';
-    }
+    if (compareNew) compareNew.style.width = Math.min(100, (num / maxVal) * 100) + '%';
     
     updateBudgetDiff(idx);
-    updateBudgetValidation();
+    
+    if (isGasto) {
+        updateBudgetValidation();
+    } else {
+        // ← NUEVO: Al cambiar ingresos, sincronizar total de gastos
+        syncWorkingGastosTotal();
+        renderBudgetStats(); // Actualizar stats para mostrar nuevo total
+    }
+    
     updateBudgetPreviewChart();
 }
 
-function onBudgetAmount(idx, val) {
-    onBudgetSlider(idx, val);
+// ← NUEVO: Sincronizar total de gastos con ingresos en tiempo real
+function syncWorkingGastosTotal() {
+    const totalIngresos = budgetWorkingData.ingresos.items.reduce((s, i) => s + i.nuevoMonto, 0);
+    const oldTotal = budgetWorkingData.gastos.total;
+    budgetWorkingData.gastos.total = totalIngresos;
+    
+    // Recalcular % de gastos basado en nuevo total (manteniendo montos absolutos)
+    budgetWorkingData.gastos.items.forEach(item => {
+        item.nuevoPct = totalIngresos > 0 ? (item.nuevoMonto / totalIngresos) * 100 : 0;
+    });
+    
+    // Si estamos en la vista de gastos, actualizar validación visual
+    if (budgetFilter === 'gastos') {
+        updateBudgetValidation();
+    }
 }
+
+function onBudgetAmount(idx, val) { onBudgetSlider(idx, val); }
 
 function onBudgetPct(idx, val) {
     const pct = parseFloat(val) || 0;
-    const monto = (pct / 100) * budgetWorkingData.total;
+    const group = getActiveBudgetGroup();
+    const monto = (pct / 100) * group.total;
     onBudgetSlider(idx, monto);
 }
 
 function updateBudgetDiff(idx) {
-    const item = budgetWorkingData.items[idx];
+    const item = getActiveBudgetGroup().items[idx];
+    const isGasto = budgetFilter === 'gastos';
     const diff = item.nuevoMonto - item.presupuestado;
-    const diffColor = diff > 0 ? '#f87171' : diff < 0 ? '#4ade80' : '#94a3b8';
+    
+    const diffColor = isGasto
+        ? (diff > 0 ? '#f87171' : diff < 0 ? '#4ade80' : '#94a3b8')
+        : (diff > 0 ? '#4ade80' : diff < 0 ? '#f87171' : '#94a3b8');
     const diffIcon = diff > 0 ? '▲' : diff < 0 ? '▼' : '—';
     
     const row = document.querySelector(`.budget-row[data-idx="${idx}"]`);
@@ -3726,18 +3884,20 @@ function resetBudget() {
 }
 
 function balanceBudget() {
-    const d = budgetWorkingData;
-    const totalAsignado = d.items.reduce((s, i) => s + i.nuevoMonto, 0);
-    const restante = d.total - totalAsignado;
+    const group = getActiveBudgetGroup();
+    const isGasto = budgetFilter === 'gastos';
     
+    if (!isGasto) return;
+    
+    const totalAsignado = group.items.reduce((s, i) => s + i.nuevoMonto, 0);
+    const restante = group.total - totalAsignado;
     if (restante <= 0) return;
     
     const factor = restante / totalAsignado;
-    d.items.forEach(item => {
+    group.items.forEach(item => {
         item.nuevoMonto += item.nuevoMonto * factor;
-        item.nuevoPct = (item.nuevoMonto / d.total) * 100;
+        item.nuevoPct = (item.nuevoMonto / group.total) * 100;
     });
-    
     renderBudgetEditor();
     renderBudgetPreviewChart();
 }
@@ -3746,78 +3906,41 @@ function balanceBudget() {
 function renderBudgetPreviewChart() {
     const ctx = getCanvas('budgetPreviewChart');
     if (!ctx) return;
+    if (budgetPreviewChart) { budgetPreviewChart.destroy(); budgetPreviewChart = null; }
     
-    if (budgetPreviewChart) {
-        budgetPreviewChart.destroy();
-        budgetPreviewChart = null;
-    }
+    const group = getActiveBudgetGroup();
+    const labels = group.items.map(i => i.nombre);
+    const presupuestadoOriginal = group.items.map(i => i.presupuestado);
+    const nuevoPresupuesto = group.items.map(i => i.nuevoMonto);
+    const real = group.items.map(i => i.real || 0);
+    const isGasto = budgetFilter === 'gastos';
     
-    const labels = budgetWorkingData.items.map(i => i.nombre);
-    const presupuestadoOriginal = budgetWorkingData.items.map(i => i.presupuestado);
-    const nuevoPresupuesto = budgetWorkingData.items.map(i => i.nuevoMonto);
-    const gastoReal = budgetWorkingData.items.map(i => i.gastoReal || 0);
+    const datasets = isGasto ? [
+        { label: 'Gasto Real', data: real, backgroundColor: 'rgba(100,116,139,0.5)', borderRadius: 4, barPercentage: 0.6, categoryPercentage: 0.8 },
+        { label: 'Presup. Actual', data: presupuestadoOriginal, backgroundColor: 'rgba(148,163,184,0.3)', borderRadius: 4, barPercentage: 0.6, categoryPercentage: 0.8 },
+        { label: 'Nuevo Presup.', data: nuevoPresupuesto, backgroundColor: group.items.map(i => getEtiquetaColor(i.etiqueta)), borderRadius: 4, barPercentage: 0.6, categoryPercentage: 0.8 }
+    ] : [
+        { label: 'Ingreso Real', data: real, backgroundColor: 'rgba(100,116,139,0.5)', borderRadius: 4, barPercentage: 0.6, categoryPercentage: 0.8 },
+        { label: 'Esperado Actual', data: presupuestadoOriginal, backgroundColor: 'rgba(148,163,184,0.3)', borderRadius: 4, barPercentage: 0.6, categoryPercentage: 0.8 },
+        { label: 'Nuevo Esperado', data: nuevoPresupuesto, backgroundColor: group.items.map(i => getEtiquetaColor(i.etiqueta)), borderRadius: 4, barPercentage: 0.6, categoryPercentage: 0.8 }
+    ];
     
     budgetPreviewChart = new Chart(ctx, {
         type: 'bar',
-        data: {
-            labels,
-            datasets: [
-                {
-                    label: 'Gasto Real',
-                    data: gastoReal,
-                    backgroundColor: 'rgba(100,116,139,0.5)',
-                    borderRadius: 4,
-                    barPercentage: 0.6,
-                    categoryPercentage: 0.8
-                },
-                {
-                    label: 'Presup. Actual',
-                    data: presupuestadoOriginal,
-                    backgroundColor: 'rgba(148,163,184,0.3)',
-                    borderRadius: 4,
-                    barPercentage: 0.6,
-                    categoryPercentage: 0.8
-                },
-                {
-                    label: 'Nuevo Presup.',
-                    data: nuevoPresupuesto,
-                    backgroundColor: budgetWorkingData.items.map(i => getEtiquetaColor(i.etiqueta)),
-                    borderRadius: 4,
-                    barPercentage: 0.6,
-                    categoryPercentage: 0.8
-                }
-            ]
-        },
+        data: { labels, datasets },
         options: {
-            responsive: true,
-            maintainAspectRatio: false,
+            responsive: true, maintainAspectRatio: false,
             plugins: {
-                legend: {
-                    position: 'top',
-                    align: 'end',
-                    labels: { color: '#94a3b8', font: { size: 11 }, usePointStyle: true }
-                },
+                legend: { position: 'top', align: 'end', labels: { color: '#94a3b8', font: { size: 11 }, usePointStyle: true } },
                 tooltip: {
-                    backgroundColor: 'rgba(15,23,42,0.95)',
-                    titleColor: '#e2e8f0', bodyColor: '#e2e8f0',
+                    backgroundColor: 'rgba(15,23,42,0.95)', titleColor: '#e2e8f0', bodyColor: '#e2e8f0',
                     borderColor: 'rgba(51,65,85,0.5)', borderWidth: 1,
-                    callbacks: {
-                        label: (c) => c.dataset.label + ': ' + fmtMoney(c.parsed.y)
-                    }
+                    callbacks: { label: (c) => c.dataset.label + ': ' + fmtMoney(c.parsed.y) }
                 }
             },
             scales: {
-                x: { 
-                    grid: { display: false }, 
-                    ticks: { color: '#64748b', font: { size: 10 }, maxRotation: 45 } 
-                },
-                y: { 
-                    grid: { color: 'rgba(51,65,85,0.2)' }, 
-                    ticks: { 
-                        color: '#64748b', font: { size: 10 }, 
-                        callback: (v) => 'RD$' + (v/1000).toFixed(0) + 'K' 
-                    } 
-                }
+                x: { grid: { display: false }, ticks: { color: '#64748b', font: { size: 10 }, maxRotation: 45 } },
+                y: { grid: { color: 'rgba(51,65,85,0.2)' }, ticks: { color: '#64748b', font: { size: 10 }, callback: (v) => 'RD$' + (v/1000).toFixed(0) + 'K' } }
             }
         }
     });
@@ -3825,18 +3948,41 @@ function renderBudgetPreviewChart() {
 
 function updateBudgetPreviewChart() {
     if (!budgetPreviewChart) return;
-    budgetPreviewChart.data.datasets[2].data = budgetWorkingData.items.map(i => i.nuevoMonto);
+    const group = getActiveBudgetGroup();
+    budgetPreviewChart.data.datasets[2].data = group.items.map(i => i.nuevoMonto);
     budgetPreviewChart.update('none');
 }
 
 // === GUARDAR EN SHEETS ===
 function saveBudget() {
-    const d = budgetWorkingData;
-    const totalAsignado = d.items.reduce((s, i) => s + i.nuevoMonto, 0);
-    const diff = d.total - totalAsignado;
+    // Recalcular gastos proporcionalmente al total de ingresos
+    const totalIngresos = budgetWorkingData.ingresos.items.reduce((s, i) => s + i.nuevoMonto, 0);
+    const gastosTotalAnterior = budgetWorkingData.gastos.items.reduce((s, i) => s + i.presupuestado, 0);
     
-    if (Math.abs(diff) > 1) {
-        alert(`⚠️ La suma de categorías (${fmtMoney(totalAsignado)}) no coincide con el total (${fmtMoney(d.total)}). Diferencia: ${fmtMoney(diff)}`);
+    budgetWorkingData.gastos.items.forEach(item => {
+        const pctDelTotal = gastosTotalAnterior > 0 ? (item.presupuestado / gastosTotalAnterior) : 0;
+        item.nuevoMonto = Math.round(totalIngresos * pctDelTotal);
+        item.nuevoPct = totalIngresos > 0 ? (item.nuevoMonto / totalIngresos) * 100 : 0;
+    });
+    budgetWorkingData.gastos.total = totalIngresos;
+    
+    // ← NUEVO: Ajustar último item de gastos para que la suma cuadre exactamente
+    const totalGastosCalculado = budgetWorkingData.gastos.items.reduce((s, i) => s + i.nuevoMonto, 0);
+    const diferenciaRedondeo = totalIngresos - totalGastosCalculado;
+    
+    if (Math.abs(diferenciaRedondeo) > 0 && budgetWorkingData.gastos.items.length > 0) {
+        // Añadir/quitar la diferencia al último item (o al más grande)
+        const lastItem = budgetWorkingData.gastos.items[budgetWorkingData.gastos.items.length - 1];
+        lastItem.nuevoMonto += diferenciaRedondeo;
+        lastItem.nuevoPct = totalIngresos > 0 ? (lastItem.nuevoMonto / totalIngresos) * 100 : 0;
+    }
+    
+    // ← NUEVO: Validar con margen de ±5 pesos (no ±1)
+    const totalGastosFinal = budgetWorkingData.gastos.items.reduce((s, i) => s + i.nuevoMonto, 0);
+    const diferenciaFinal = Math.abs(totalGastosFinal - totalIngresos);
+    
+    if (diferenciaFinal > 5) {
+        alert(`⚠️ Los gastos (${fmtMoney(totalGastosFinal)}) exceden los ingresos (${fmtMoney(totalIngresos)}).\nDiferencia: ${fmtMoney(diferenciaFinal)}. Ajusta primero.`);
         return;
     }
     
@@ -3846,13 +3992,24 @@ function saveBudget() {
     btn.disabled = true;
     
     const payload = {
-        total: d.total,
-        categorias: d.items.map(i => ({
-            id: i.id,
-            nombre: i.nombre,
-            monto: Math.round(i.nuevoMonto),
-            pct: parseFloat(i.nuevoPct.toFixed(2))
-        }))
+        ingresos: {
+            total: totalIngresos,
+            categorias: budgetWorkingData.ingresos.items.map(i => ({
+                id: i.id,
+                nombre: i.nombre,
+                monto: Math.round(i.nuevoMonto),
+                pct: parseFloat(i.nuevoPct.toFixed(2))
+            }))
+        },
+        gastos: {
+            total: totalIngresos,
+            categorias: budgetWorkingData.gastos.items.map(i => ({
+                id: i.id,
+                nombre: i.nombre,
+                monto: Math.round(i.nuevoMonto),
+                pct: parseFloat(i.nuevoPct.toFixed(2))
+            }))
+        }
     };
     
     const callbackName = 'budgetSaveCallback_' + Date.now();
@@ -3874,9 +4031,8 @@ function saveBudget() {
         cleanup();
         btn.innerHTML = originalText;
         btn.disabled = false;
-        
         if (res && res.success) {
-            alert('✅ Presupuesto guardado correctamente en Sheets');
+            alert(`✅ ${res.message}\nIngresos: ${fmtMoney(res.totalIngresos)}\nGastos: ${fmtMoney(res.totalGastos)}\nDiferencia: ${fmtMoney(res.diferencia || 0)}`);
             refreshData();
         } else {
             alert('❌ Error: ' + (res?.message || 'No se pudo guardar'));
@@ -3892,10 +4048,11 @@ function saveBudget() {
     
     const jsonPayload = encodeURIComponent(JSON.stringify(payload));
     const url = CONFI.API_URL + '?action=updateBudget&data=' + jsonPayload + '&callback=' + callbackName;
-    
     script.src = url;
     document.head.appendChild(script);
 }
+
+
 
 // Hook para inicializar cuando se abre el tab
 const originalSwitchTab = switchTab;

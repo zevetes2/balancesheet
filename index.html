@@ -8,6 +8,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  
 
 <base target="_blank">
 <base target="_blank">
@@ -38,6 +39,13 @@
           <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
         </svg>
         Exportar
+      </button>
+      <button class="header-btn" onclick="openWalletConfig()" title="Wallet by BudgetBakers">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="5" width="20" height="14" rx="2"/>
+          <line x1="2" y1="10" x2="22" y2="10"/>
+        </svg>
+        Wallet
       </button>
     </div>
   </header>
@@ -483,8 +491,45 @@
       </div>
     </section>
 
-  </main>
+    <!-- WALLET CONFIG MODAL -->
+    <div id="walletConfigModal" class="asset-modal">
+      <div class="asset-modal-content" style="max-width: 700px; max-height: 90vh; overflow-y: auto;">
+        <div class="asset-modal-header">
+          <h3>🔷 Sincronizar con Wallet by BudgetBakers</h3>
+          <button onclick="closeWalletConfig()" class="close-btn">&times;</button>
+        </div>
+        <div class="asset-modal-body">
+          <div style="margin-bottom:20px;">
+            <label style="display:block;font-size:12px;color:#64748b;margin-bottom:6px;font-weight:600;">API Token</label>
+            <input type="password" id="walletTokenInput" placeholder="Pega tu token de Wallet..." 
+              style="width:100%;padding:10px 14px;border-radius:10px;border:1px solid rgba(51,65,85,0.4);background:rgba(15,23,42,0.5);color:#e2e8f0;font-family:'Inter',sans-serif;">
+            <div style="font-size:11px;color:#64748b;margin-top:6px;">
+              Obtén tu token en: Wallet Web → Settings → API Token (requiere Premium)
+            </div>
+          </div>
+          
+          <div style="margin-bottom:20px;">
+            <button class="header-btn primary" onclick="testWalletConnection()">
+              🧪 Probar Conexión
+            </button>
+            <span id="walletTestStatus" style="margin-left:10px;font-size:13px;"></span>
+          </div>
 
+          <div id="walletCatMappingSection" style="display:none;">
+            <div style="font-size:14px;font-weight:700;color:#f8fafc;margin-bottom:12px;">
+              Mapeo de Presupuestos
+            </div>
+            <div style="font-size:12px;color:#64748b;margin-bottom:16px;">
+              Selecciona qué presupuesto de Wallet corresponde a cada categoría de tu Balance Sheet.
+            </div>
+            <div id="walletCatMappingList" style="max-height:400px;overflow-y:auto;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+  <script src="wallet-api.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

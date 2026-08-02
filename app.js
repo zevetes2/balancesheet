@@ -509,7 +509,7 @@ function loadDataJSONP() {
         const timeout = setTimeout(() => {
             reject(new Error('Timeout JSONP después de 30s'));
             cleanup();
-        }, 30000);
+        }, 60000);
 
         function cleanup() {
             if (script.parentNode) script.parentNode.removeChild(script);
@@ -4062,3 +4062,143 @@ switchTab = function(tabId) {
         setTimeout(initBudgetEditor, 100);
     }
 };
+
+// ============================================================
+// WALLET INTEGRATION — UI & SYNC (v3: Mapeo de Budgets)
+// ====================================================
+
+function openWalletConfig() {
+    document.getElementById('walletConfigModal').classList.add('active');
+    document.getElementById('walletTokenInput').value = walletAPI.getToken() || '';
+    if (walletAPI.isConfigured()) renderWalletBudgetMapping();
+}
+
+function closeWalletConfig() {
+    document.getElementById('walletConfigModal').classList.remove('active');
+}
+
+async function testWalletConnection() {
+    const token = document.getElementById('walletTokenInput').value.trim();
+    if (!token) { alert('Ingresa un token primero'); return; }
+    
+    walletAPI.setToken(token);
+    const status = document.getElementById('walletTestStatus');
+    status.textContent = '⏳ Conectando...';
+    status.style.color = '#fbbf24';
+    
+    try {
+        await walletAPI.loadBudgets();
+        status.textContent = `✅ Conectado — ${walletAPI.budgets.length} presupuestos encontrados`;
+        status.style.color = '#4ade80';
+        renderWalletBudgetMapping();
+    } catch (e) {
+        status.textContent = `❌ ${e.message}`;
+        status.style.color = '#f87171';
+    }
+}
+
+function renderWalletBudgetMapping() {
+    const section = document.getElementById('walletCatMappingSection');
+    const list = document.getElementById('walletCatMappingList');
+    section.style.display = 'block';
+    
+    // Título actualizado
+    section.querySelector('div:first-child').textContent = 'Mapeo de Presupuestos';
+    section.querySelector('div:nth-child(2)').textContent = 'Asocia cada categoría de tu Balance Sheet con un presupuesto de Wallet.';
+    
+    // Obtener categorías principales de gasto del CAT_DB
+    const gastoCats = Object.entries(CAT_DB)
+        .filter(([name, meta]) => meta.tipo === 'Gastos' && !meta.padre)
+        .sort((a, b) => a[0].localeCompare(b[0]));
+    
+    // Presupuestos de Wallet (filtrar solo los abiertos y mensuales para claridad)
+    const walletBudgets = walletAPI.budgets
+    .filter(b => !b.closed)
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    let html = '';
+    gastoCats.forEach(([localName, meta]) => {
+        const currentMap = walletAPI.getBudgetMapping(localName);
+        const matchedBudget = currentMap ? walletAPI.budgets.find(b => b.id === currentMap) : null;
+        
+        html += `
+            <div style="display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid rgba(51,65,85,0.2);">
+                <div style="flex:1;min-width:0;">
+                    <div style="font-size:13px;font-weight:600;color:#f8fafc;">${localName}</div>
+                    <div style="font-size:11px;color:#64748b;">${meta.etiqueta} · RD$${(matchedBudget?.limit || 0).toLocaleString('es-DO')}</div>
+                </div>
+                <select onchange="walletAPI.setBudgetMapping('${localName.replace(/'/g, "\\'")}', this.value)" 
+                    style="flex:1.2;min-width:180px;padding:8px 10px;border-radius:8px;border:1px solid rgba(51,65,85,0.4);background:rgba(15,23,42,0.6);color:#e2e8f0;font-size:12px;">
+                    <option value="">— Sin mapear —</option>
+                    ${walletBudgets.map(b => {
+                        const sel = currentMap === b.id ? 'selected' : '';
+                        const limit = b.limit ? `RD$${b.limit.toLocaleString('es-DO')}` : 'Sin límite';
+                        const tipoLabel = b.type === 'BUDGET_INTERVAL_YEAR' ? '📅 Anual' : '📆 Mensual';
+                        return `<option value="${b.id}" ${sel}>${b.name} · ${limit} · ${tipoLabel}</option>`;
+                    }).join('')}
+                </select>
+            </div>
+        `;
+    });
+    list.innerHTML = html;
+}
+
+// Hook: Sincronizar con Wallet al guardar presupuesto
+const originalSaveBudget = saveBudget;
+saveBudget = async function() {
+    // Primero ejecutar el guardado original en Sheets
+    await originalSaveBudget();
+    
+    // Luego sincronizar con Wallet si está configurado
+    if (!walletAPI.isConfigured()) {
+        console.log('ℹ️ Wallet API no configurado — saltando sync');
+        return;
+    }
+    
+    const btn = document.getElementById('saveBudgetBtn');
+    const originalHTML = btn.innerHTML;
+    
+    // Verificar que hay mapeos de budgets
+    const mappings = walletAPI.getAllBudgetMappings();
+    const hasMappings = Object.values(mappings).some(v => !!v);
+    if (!hasMappings) {
+        console.log('ℹ️ No hay presupuestos mapeados a Wallet — saltando sync');
+        return;
+    }
+    
+    btn.innerHTML = '⏳ Sync Wallet...';
+    btn.disabled = true;
+    
+    try {
+        const result = await walletAPI.syncBudgets(budgetWorkingData);
+        const msg = [
+            `✅ Wallet sincronizado:`,
+            `Actualizados: ${result.updated.length}`,
+            `Omitidos: ${result.skipped.length}`,
+            `Errores: ${result.errors.length}`
+        ].join('\n');
+        
+        if (result.errors.length > 0) {
+            console.error('Errores Wallet:', result.errors);
+            alert(msg + '\n\nErrores:\n' + result.errors.map(e => `- ${e.name}: ${e.error}`).join('\n'));
+        } else {
+            console.log('Wallet sync:', result);
+            alert(msg);
+        }
+    } catch (e) {
+        console.error('Error sync Wallet:', e);
+        alert('❌ Error sincronizando con Wallet:\n' + e.message);
+    } finally {
+        btn.innerHTML = originalHTML;
+        btn.disabled = false;
+    }
+};
+
+// Cerrar modal con click fuera o Escape
+document.addEventListener('click', function(e) {
+    const modal = document.getElementById('walletConfigModal');
+    if (e.target === modal) closeWalletConfig();
+});
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeWalletConfig();
+});

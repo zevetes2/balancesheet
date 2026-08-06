@@ -15,6 +15,30 @@
     let appData = null;
     let charts = {};
 
+    // === CACHE LOCAL ===
+    const BS_CACHE_KEY = 'bs_cache_v2';
+    const BS_CACHE_TTL = 1000 * 60 * 30; // 30 minutos
+
+    function saveCache(data) {
+        try {
+            localStorage.setItem(BS_CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
+        } catch (e) { console.warn('Cache no guardado:', e); }
+    }
+
+    function loadCache() {
+        try {
+            const raw = localStorage.getItem(BS_CACHE_KEY);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (Date.now() - parsed.timestamp > BS_CACHE_TTL) {
+                localStorage.removeItem(BS_CACHE_KEY);
+                return null;
+            }
+            return parsed.data;
+        } catch (e) { return null; }
+    }
+
+
     // === MODAL DE DETALLE DE ACTIVO ===
     let assetDetailChart = null;
 
@@ -462,44 +486,74 @@ function getDeudaRotativa() {
     }
     });
 
-    // === CARGA DE DATOS ===
+
     async function loadData() {
-    // Desde localhost/file://, CORS bloquea fetch SIEMPRE con Apps Script.
-    // Usamos JSONP directamente sin intentar fetch primero.
     const isLocal = location.hostname === 'localhost' || 
                     location.hostname === '127.0.0.1' || 
                     location.protocol === 'file:';
 
+    // 1. Mostrar cache inmediatamente (percepción de velocidad)
+    const cached = loadCache();
+    if (cached) {
+        appData = cached;
+        console.log('⚡ Dashboard desde cache local');
+        renderAll();
+        document.getElementById('loading').classList.add('hidden');
+    }
+
+    // 2. Cargar datos frescos en background
+    let freshData = null;
+
     if (!isLocal) {
-        // En producción (mismo dominio o con proxy), intentar fetch
         try {
             const res = await fetch(CONFI.API_URL + '?action=getData');
             if (res.ok) {
-                appData = await res.json();
+                freshData = await res.json();
                 console.log('✅ Datos vía Fetch');
-                // DEBUG: Ver todo el summary
-
-                return;
             }
         } catch (e) {
             console.log('⚠️ Fetch falló:', e.message);
         }
     }
 
-    // JSONP: funciona desde cualquier origen
-    console.log('🌐 Intentando JSONP...');
-    try {
-        appData = await loadDataJSONP();
-        console.log('✅ Datos vía JSONP');
-        return;
-    } catch (e) {
-        console.log('⚠️ JSONP falló:', e.message);
+    if (!freshData) {
+        try {
+            freshData = await loadDataJSONP();
+            console.log('✅ Datos vía JSONP');
+        } catch (e) {
+            console.log('⚠️ JSONP falló:', e.message);
+            if (!cached) throw new Error('No se pudieron cargar los datos.');
+            return; // Seguimos con cache
+        }
     }
 
-      // Fallback final
-    console.log('❌ No hay datos disponibles');
-    throw new Error('No se pudieron cargar los datos. Verifica la conexión con Google Apps Script.');
+    // 3. Actualizar si hay datos nuevos
+    if (freshData) {
+        const hadCache = !!appData;
+        appData = freshData;
+        saveCache(appData);
+
+        if (hadCache) {
+            // Refrescar silenciosamente el tab activo
+            invalidateRenderedTabs();
+            const activeTab = document.querySelector('.section.active')?.id || 'overview';
+            renderedTabs.add(activeTab);
+            renderTabContent(activeTab);
+            // Forzar re-creación de charts del tab activo
+            if (activeTab === 'overview') {
+                destroyAllCharts();
+                renderChartsForTab('overview');
+            }
+        } else {
+            renderAll();
+            document.getElementById('loading').classList.add('hidden');
+        }
+    }
 }
+
+
+
+    
 
 // === JSONP LOADER (bypass CORS) ===
 function loadDataJSONP() {
@@ -540,18 +594,31 @@ function loadDataJSONP() {
     });
 }
 
-// === TABS ===
+    // === TABS OPTIMIZADOS ===
     function switchTab(tabId) {
-    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-    document.querySelectorAll('.section').forEach(sec => sec.classList.remove('active'));
-    document.querySelector(`[data-tab="${tabId}"]`).classList.add('active');
-    document.getElementById(tabId).classList.add('active');
-    
-    // Re-renderizar gráficos del tab activo
-    setTimeout(() => {
-        renderChartsForTab(tabId);
-    }, 50);
+        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.section').forEach(sec => sec.classList.remove('active'));
+        document.querySelector(`[data-tab="${tabId}"]`).classList.add('active');
+        document.getElementById(tabId).classList.add('active');
+        
+        // Lazy render: solo la primera vez que entras al tab
+        if (!renderedTabs.has(tabId)) {
+            renderedTabs.add(tabId);
+            renderTabContent(tabId);
+        }
+        
+        // Charts: solo si no existen (no destruir al cambiar de tab)
+        setTimeout(() => {
+            renderChartsForTab(tabId);
+        }, 50);
     }
+
+    // Hook de wallet/budget (simplificado)
+    const originalSwitchTab = switchTab;
+    switchTab = function(tabId) {
+        originalSwitchTab(tabId);
+    };
+
 
     // === FORMATO ===
     function fmtMoney(val) {
@@ -1687,51 +1754,39 @@ function renderRatiosRadarChart() {
     });
 }
 
-    // === CHARTS ===
+    // === RENDER CHARTS POR TAB (solo si no existen) ===
     function renderChartsForTab(tab) {
-    if (tab === 'overview') {
-        renderPatrimonioChart();
-        renderAssetsPieChart();
-        renderAssetsVsLiabilitiesChart();
-    } else if (tab === 'assets') {
-        renderLiquidoChart();
-        renderInversionesChart();
-    } else if (tab === 'liabilities') {
-        renderLiabilitiesChart();
-    } else if (tab === 'income') {
-        renderIncomeChart();
-    } else if (tab === 'expenses') {
-        renderExpensesChart();
-        renderExpensesPieChart();
-    }else if (tab === 'jarras') {
-        renderJarrasTab();
-    }else if (tab === 'analytics') {
-        renderGrowthRateChart();
-        renderInvGrowthRateChart();
-        renderIncomeVsExpenseChart();
-        renderProjectionChart();  
-    } else if (tab === 'ratios') {
-        try {
-            renderRatios();
-        } catch (e) {
-            console.error('Error renderizando ratios:', e);
+        if (tab === 'overview') {
+            if (!charts.patrimonio) renderPatrimonioChart();
+            if (!charts.assetsPie) renderAssetsPieChart();
+            if (!charts.assetsVsLiab) renderAssetsVsLiabilitiesChart();
+        } else if (tab === 'assets') {
+            if (!charts.liquido) renderLiquidoChart();
+            if (!charts.inversiones) renderInversionesChart();
+        } else if (tab === 'liabilities') {
+            if (!charts.liabilities) renderLiabilitiesChart();
+        } else if (tab === 'income') {
+            if (!charts.income) renderIncomeChart();
+        } else if (tab === 'expenses') {
+            if (!charts.expenses) renderExpensesChart();
+            if (!charts.expensesPie) renderExpensesPieChart();
+        } else if (tab === 'analytics') {
+            if (!charts.growthRate) renderGrowthRateChart();
+            if (!charts.invGrowthRate) renderInvGrowthRateChart();
+            if (!charts.incVsExp) renderIncomeVsExpenseChart();
+            if (!charts.projection) renderProjectionChart();
+        } else if (tab === 'ratios') {
+            try { renderRatios(); } catch (e) { console.error(e); }
+            setTimeout(() => {
+                try { if (!charts.ratiosRadar) renderRatiosRadarChart(); } 
+                catch (e) { console.error(e); }
+            }, 100);
+        } else if (tab === 'db-gastos') {
+            renderDBGastosTab();
+        } else if (tab === 'jarras') {
+            renderJarrasTab();
         }
-        setTimeout(() => {
-            try {
-                if (charts.ratiosRadar) {
-                    charts.ratiosRadar.destroy();
-                    charts.ratiosRadar = null;
-                }
-                renderRatiosRadarChart();
-            } catch (e) {
-                console.error('Error renderizando radar chart:', e);
-            }
-        }, 100);
-    } else if (tab === 'db-gastos') {
-        renderDBGastosTab();
     }
-
-  }
 
   function formatShortDate(dateStr) {
     // Si ya está en formato corto, devolver tal cual
@@ -2523,32 +2578,92 @@ function renderRatiosRadarChart() {
     });
 }
 
-    // === UTILS ===
+    // === CANVAS REUTILIZABLE (no destruye al cambiar de tab) ===
     function getCanvas(containerId) {
     const container = document.getElementById(containerId);
     if (!container) return null;
-    container.innerHTML = '';
-    const canvas = document.createElement('canvas');
-    container.appendChild(canvas);
+    
+    // Reutilizar canvas existente
+    let canvas = container.querySelector('canvas');
+    if (!canvas) {
+        canvas = document.createElement('canvas');
+        container.appendChild(canvas);
+    }
+    
+    // DESTRUIR chart anterior si existe (Chart.js API nativa)
+    const existingChart = Chart.getChart ? Chart.getChart(canvas) : null;
+    if (existingChart) {
+        existingChart.destroy();
+    }
+    
     return canvas.getContext('2d');
+}
+
+    // === DESTRUIR TODOS LOS CHARTS (solo para refreshData) ===
+    function destroyAllCharts() {
+        Object.keys(charts).forEach(key => {
+            if (charts[key] && typeof charts[key].destroy === 'function') {
+                charts[key].destroy();
+                delete charts[key];
+            }
+        });
+        // Limpiar contenedores
+        const chartIds = [
+            'patrimonioChart','assetsPieChart','assetsVsLiabilitiesChart',
+            'liquidoChart','inversionesChart','liabilitiesChart',
+            'incomeChart','expensesChart','expensesPieChart',
+            'growthRateChart','invGrowthRateChart','incomeVsExpenseChart',
+            'projectionChart','ratiosRadarChart',
+            'jarrasBarChart','jarrasMonthlyChart',
+            'dbGastosTotalChart','dbGastosTopCurrentChart','budgetPreviewChart'
+        ];
+        chartIds.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = '';
+        });
+    }
+
+    // === LAZY RENDER ===
+    let renderedTabs = new Set();
+
+    function invalidateRenderedTabs() {
+        renderedTabs.clear();
+    }
+
+    function renderTabContent(tabId) {
+        switch(tabId) {
+            case 'overview': renderOverview(); break;
+            case 'assets': renderAssets(); break;
+            case 'liabilities': renderLiabilities(); break;
+            case 'income': renderIncome(); break;
+            case 'expenses': renderExpenses(); break;
+            case 'analytics': renderAnalytics(); break;
+            case 'ratios': break; // Los ratios se manejan en renderChartsForTab
+            case 'db-gastos': renderDBGastosTab(); break;
+            case 'jarras': renderJarrasTab(); break;
+            case 'budget': setTimeout(initBudgetEditor, 100); break;
+        }
     }
 
     function renderAll() {
-    renderOverview();
-    renderAssets();
-    renderLiabilities();
-    renderIncome();
-    renderExpenses();
-    renderAnalytics();
-    renderChartsForTab('overview');
+        // Solo overview al inicio. El resto se renderiza bajo demanda.
+        renderOverview();
+        const activeTab = document.querySelector('.section.active')?.id || 'overview';
+        renderedTabs.add(activeTab);
+        if (activeTab === 'overview') {
+            renderChartsForTab('overview');
+        }
     }
 
-    // === ACTIONS ===
+
     async function refreshData() {
-    document.getElementById('loading').classList.remove('hidden');
-    await loadData();
-    renderAll();
-    document.getElementById('loading').classList.add('hidden');
+        document.getElementById('loading').classList.remove('hidden');
+        destroyAllCharts();
+        invalidateRenderedTabs();
+        // Limpiar cache forzando carga fresca
+        localStorage.removeItem(BS_CACHE_KEY);
+        await loadData();
+        document.getElementById('loading').classList.add('hidden');
     }
 
     function exportData() {
@@ -2994,13 +3109,15 @@ function renderDBGastosTotalChart() {
   const ctx = getCanvas('dbGastosTotalChart');
   if (!ctx) return;
 
-  const data = (gastosData.resumen.totalPorMes || []).map(d => ({
-    date: formatShortDate(d.isoDate || d.mes),
-    gasto: d.gasto || 0,
-    ingreso: d.ingreso || 0
-  }));
+  if (charts.dbGastosTotal) { charts.dbGastosTotal.destroy(); }
+    
+    const data = (gastosData.resumen.totalPorMes || []).map(d => ({
+        date: formatShortDate(d.isoDate || d.mes),
+        gasto: d.gasto || 0,
+        ingreso: d.ingreso || 0
+    }));
 
-  new Chart(ctx, {
+    charts.dbGastosTotal = new Chart(ctx, {
     type: 'line',
     data: {
       labels: data.map(d => d.date),
@@ -3058,14 +3175,15 @@ function renderDBGastosTopCurrentChart() {
   const ctx = getCanvas('dbGastosTopCurrentChart');
   if (!ctx) return;
 
-  // Top 15 de GASTOS (principales)
-  const topGastos = Object.entries(gastosData.categorias)
-    .filter(([name, data]) => {
-      const meta = getCatMeta(name);
-      return !meta.padre && meta.tipo === 'Gastos' && data.current > 0;
-    })
-    .sort((a, b) => b[1].current - a[1].current)
-    .slice(0, 15);
+  if (charts.dbGastosTop) { charts.dbGastosTop.destroy(); }
+
+    const topGastos = Object.entries(gastosData.categorias)
+        .filter(([name, data]) => {
+            const meta = getCatMeta(name);
+            return !meta.padre && meta.tipo === 'Gastos' && data.current > 0;
+        })
+        .sort((a, b) => b[1].current - a[1].current)
+        .slice(0, 15);
 
   document.getElementById('dbGastosTopCurrentSub').textContent =
     (gastosData.resumen.mesActual?.mes || '') + ' · Categorías Principales';
@@ -3078,7 +3196,7 @@ function renderDBGastosTopCurrentChart() {
     chartContainer.style.height = chartHeight + 'px';
   }
 
-  new Chart(ctx, {
+  charts.dbGastosTop = new Chart(ctx, {
     type: 'bar',
     data: {
       labels: topGastos.map(([name]) => name),
@@ -4063,14 +4181,6 @@ function saveBudget() {
     document.head.appendChild(script);
 }
 
-// Hook para inicializar cuando se abre el tab
-const originalSwitchTab = switchTab;
-switchTab = function(tabId) {
-    originalSwitchTab(tabId);
-    if (tabId === 'budget') {
-        setTimeout(initBudgetEditor, 100);
-    }
-};
 
 // ============================================================
 // WALLET INTEGRATION — UI & SYNC (v3: Mapeo de Budgets)

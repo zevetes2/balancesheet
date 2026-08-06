@@ -1703,7 +1703,9 @@ function renderRatiosRadarChart() {
     } else if (tab === 'expenses') {
         renderExpensesChart();
         renderExpensesPieChart();
-    } else if (tab === 'analytics') {
+    }else if (tab === 'jarras') {
+        renderJarrasTab();
+    }else if (tab === 'analytics') {
         renderGrowthRateChart();
         renderInvGrowthRateChart();
         renderIncomeVsExpenseChart();
@@ -3953,36 +3955,45 @@ function updateBudgetPreviewChart() {
     budgetPreviewChart.update('none');
 }
 
-// === GUARDAR EN SHEETS ===
 function saveBudget() {
-    // Recalcular gastos proporcionalmente al total de ingresos
     const totalIngresos = budgetWorkingData.ingresos.items.reduce((s, i) => s + i.nuevoMonto, 0);
-    const gastosTotalAnterior = budgetWorkingData.gastos.items.reduce((s, i) => s + i.presupuestado, 0);
     
+    // === PASO 1: Usar los nuevoMonto actuales de gastos (lo que el usuario editó) ===
+    let totalGastos = budgetWorkingData.gastos.items.reduce((s, i) => s + i.nuevoMonto, 0);
+    const diferencia = totalIngresos - totalGastos;
+    
+    // === PASO 2: Si hay diferencia, distribuir proporcionalmente entre gastos actuales ===
+    if (Math.abs(diferencia) > 0 && totalGastos > 0) {
+        budgetWorkingData.gastos.items.forEach(item => {
+            const proporcion = item.nuevoMonto / totalGastos;
+            const ajuste = Math.round(diferencia * proporcion);
+            item.nuevoMonto += ajuste;
+        });
+    }
+    
+    // === PASO 3: Ajuste de redondeo final (±5 pesos de margen) ===
+    const totalGastosFinal = budgetWorkingData.gastos.items.reduce((s, i) => s + i.nuevoMonto, 0);
+    const diferenciaRedondeo = totalIngresos - totalGastosFinal;
+    
+    if (Math.abs(diferenciaRedondeo) > 0 && budgetWorkingData.gastos.items.length > 0) {
+        // Añadir/quitar la diferencia al item con mayor monto (más estable que el último)
+        const sorted = [...budgetWorkingData.gastos.items].sort((a, b) => b.nuevoMonto - a.nuevoMonto);
+        const target = sorted[0];
+        target.nuevoMonto += diferenciaRedondeo;
+    }
+    
+    // === PASO 4: Recalcular % de cada gasto sobre el total de ingresos ===
     budgetWorkingData.gastos.items.forEach(item => {
-        const pctDelTotal = gastosTotalAnterior > 0 ? (item.presupuestado / gastosTotalAnterior) : 0;
-        item.nuevoMonto = Math.round(totalIngresos * pctDelTotal);
         item.nuevoPct = totalIngresos > 0 ? (item.nuevoMonto / totalIngresos) * 100 : 0;
     });
     budgetWorkingData.gastos.total = totalIngresos;
     
-    // ← NUEVO: Ajustar último item de gastos para que la suma cuadre exactamente
-    const totalGastosCalculado = budgetWorkingData.gastos.items.reduce((s, i) => s + i.nuevoMonto, 0);
-    const diferenciaRedondeo = totalIngresos - totalGastosCalculado;
-    
-    if (Math.abs(diferenciaRedondeo) > 0 && budgetWorkingData.gastos.items.length > 0) {
-        // Añadir/quitar la diferencia al último item (o al más grande)
-        const lastItem = budgetWorkingData.gastos.items[budgetWorkingData.gastos.items.length - 1];
-        lastItem.nuevoMonto += diferenciaRedondeo;
-        lastItem.nuevoPct = totalIngresos > 0 ? (lastItem.nuevoMonto / totalIngresos) * 100 : 0;
-    }
-    
-    // ← NUEVO: Validar con margen de ±5 pesos (no ±1)
-    const totalGastosFinal = budgetWorkingData.gastos.items.reduce((s, i) => s + i.nuevoMonto, 0);
-    const diferenciaFinal = Math.abs(totalGastosFinal - totalIngresos);
+    // === PASO 5: Validación final ===
+    const totalGastosValidado = budgetWorkingData.gastos.items.reduce((s, i) => s + i.nuevoMonto, 0);
+    const diferenciaFinal = Math.abs(totalGastosValidado - totalIngresos);
     
     if (diferenciaFinal > 5) {
-        alert(`⚠️ Los gastos (${fmtMoney(totalGastosFinal)}) exceden los ingresos (${fmtMoney(totalIngresos)}).\nDiferencia: ${fmtMoney(diferenciaFinal)}. Ajusta primero.`);
+        alert(`⚠️ Los gastos (${fmtMoney(totalGastosValidado)}) no cuadran con los ingresos (${fmtMoney(totalIngresos)}).\nDiferencia: ${fmtMoney(diferenciaFinal)}. Ajusta primero.`);
         return;
     }
     
@@ -4051,8 +4062,6 @@ function saveBudget() {
     script.src = url;
     document.head.appendChild(script);
 }
-
-
 
 // Hook para inicializar cuando se abre el tab
 const originalSwitchTab = switchTab;
@@ -4202,3 +4211,310 @@ document.addEventListener('click', function(e) {
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') closeWalletConfig();
 });
+
+// ============================================================
+// JARRAS — MÉTODO DE LAS 6 JARRAS
+// ============================================================
+
+let jarrasData = null;
+let jarrasYear = null;
+let jarrasCharts = {};
+
+const JARRA_COLORS = {
+  'Neceisdades Básicas': '#3b82f6',
+  'Donativos': '#ec4899',
+  'Educacion': '#2e7d32',
+  'Entretenimiento': '#4db6ac',
+  'Ahorros': '#64dd17',
+  'Inversión': '#ff1744'
+};
+
+const JARRA_ICONS = {
+  'Neceisdades Básicas': '🏠',
+  'Donativos': '🤝',
+  'Educacion': '📚',
+  'Entretenimiento': '🎉',
+  'Ahorros': '💎',
+  'Inversión': '📈'
+};
+
+function loadJarrasData() {
+  return new Promise((resolve, reject) => {
+    if (jarrasData) { resolve(jarrasData); return; }
+    
+    const callbackName = 'jarrasCallback_' + Date.now();
+    const script = document.createElement('script');
+    const timeout = setTimeout(() => {
+      reject(new Error('Timeout JSONP (getJarras)'));
+      cleanup();
+    }, 30000);
+
+    function cleanup() {
+      if (script.parentNode) script.parentNode.removeChild(script);
+      delete window[callbackName];
+      clearTimeout(timeout);
+    }
+
+    window[callbackName] = (data) => {
+      console.log('📡 Respuesta JARRAS:', data); // DEBUG
+      if (!data) {
+        reject(new Error('Respuesta vacía del servidor'));
+        cleanup();
+        return;
+      }
+      if (data.error) {
+        reject(new Error(data.message || 'Error del servidor'));
+        cleanup();
+        return;
+      }
+      if (!data.metadata || !data.metadata.years || data.metadata.years.length === 0) {
+        reject(new Error('Datos incompletos: no se encontraron años'));
+        cleanup();
+        return;
+      }
+      jarrasData = data;
+      jarrasYear = data.metadata.years[0];
+      resolve(data);
+      cleanup();
+    };
+
+    script.onerror = () => {
+      reject(new Error('Error de red JSONP (getJarras)'));
+      cleanup();
+    };
+
+    const url = CONFI.API_URL + '?action=getJarras&callback=' + callbackName;
+    console.log('📡 Cargando JARRAS desde:', url.substring(0, 80) + '...');
+    script.src = url;
+    document.head.appendChild(script);
+  });
+}
+
+async function renderJarrasTab() {
+  const statsEl = document.getElementById('jarrasStats');
+  const cardsEl = document.getElementById('jarrasCards');
+  
+  if (statsEl) statsEl.innerHTML = '<div class="stat-card" style="grid-column:1/-1"><div class="stat-value" style="font-size:14px;color:#64748b">⏳ Cargando jarras...</div></div>';
+  
+  try {
+    if (!jarrasData) await loadJarrasData();
+    renderJarras();
+  } catch (e) {
+    console.error('Error cargando JARRAS:', e);
+    if (statsEl) {
+      statsEl.innerHTML = '<div class="stat-card" style="grid-column:1/-1"><div class="stat-value" style="font-size:16px;color:#f87171">❌ ' + e.message + '</div><div class="stat-sub">Revisa la consola (F12) y verifica que la hoja \"JARRAS\" exista en Sheets</div></div>';
+    }
+    if (cardsEl) cardsEl.innerHTML = '';
+  }
+}
+
+function renderJarras() {
+  if (!jarrasData) return;
+  
+  const year = jarrasYear || (jarrasData.metadata && jarrasData.metadata.years[0]);
+  if (!year) {
+    console.error('No hay año seleccionado ni disponible');
+    return;
+  }
+  
+  const resumen = jarrasData.resumenAnual[year];
+  const historial = (jarrasData.historialMensual || []).filter(m => m.year === year);
+  
+  if (!resumen) {
+    document.getElementById('jarrasStats').innerHTML = '<div class="stat-card" style="grid-column:1/-1"><div class="stat-value" style="font-size:16px;color:#f87171">No hay datos para ' + year + '</div></div>';
+    return;
+  }
+
+  // Selector de año
+  const yearSelect = document.getElementById('jarrasYearSelect');
+  if (yearSelect && jarrasData.metadata && jarrasData.metadata.years) {
+    yearSelect.innerHTML = jarrasData.metadata.years.map(y => 
+      `<option value="${y}" ${y === year ? 'selected' : ''}>${y}</option>`
+    ).join('');
+  }
+
+  // Stats
+  const totalPresupuesto = Object.values(resumen).reduce((s, j) => s + (j.presupuesto || 0), 0);
+  const totalGastado = Object.values(resumen).reduce((s, j) => s + (j.gastado || 0), 0);
+  const totalDiff = totalPresupuesto - totalGastado;
+  const pctGlobal = totalPresupuesto > 0 ? (totalGastado / totalPresupuesto) * 100 : 0;
+
+  const statsHtml = `
+    <div class="stat-card" style="border-top:3px solid #3b82f6">
+      <div class="stat-header"><span class="stat-label">Presupuesto Anual</span></div>
+      <div class="stat-value">${fmtMoney(totalPresupuesto)}</div>
+      <div class="stat-sub">${year} · 6 jarras</div>
+    </div>
+    <div class="stat-card" style="border-top:3px solid #ef4444">
+      <div class="stat-header"><span class="stat-label">Total Gastado</span></div>
+      <div class="stat-value" style="color:#f87171">${fmtMoney(totalGastado)}</div>
+      <div class="stat-sub">${pctGlobal.toFixed(1)}% del presupuesto</div>
+    </div>
+    <div class="stat-card" style="border-top:3px solid ${totalDiff >= 0 ? '#22c55e' : '#ef4444'}">
+      <div class="stat-header"><span class="stat-label">${totalDiff >= 0 ? 'Superávit' : 'Déficit'}</span></div>
+      <div class="stat-value" style="color:${totalDiff >= 0 ? '#4ade80' : '#f87171'}">${fmtMoney(Math.abs(totalDiff))}</div>
+      <div class="stat-sub">${totalDiff >= 0 ? '✅ Bajo presupuesto' : '🔴 Excedido'}</div>
+    </div>
+    <div class="stat-card" style="border-top:3px solid #8b5cf6">
+      <div class="stat-header"><span class="stat-label">Meses Registrados</span></div>
+      <div class="stat-value">${historial.length}</div>
+      <div class="stat-sub">en ${year}</div>
+    </div>
+  `;
+  document.getElementById('jarrasStats').innerHTML = statsHtml;
+
+  // Cards
+  const cardsContainer = document.getElementById('jarrasCards');
+  let cardsHtml = '';
+  
+  for (const [name, vals] of Object.entries(resumen)) {
+    const color = JARRA_COLORS[name] || '#64748b';
+    const icon = JARRA_ICONS[name] || '💰';
+    const pct = vals.pctUsado || 0;
+    const diff = vals.diferencia || 0;
+    const diffText = diff >= 0 ? `+${fmtMoney(diff)} libre` : `${fmtMoney(Math.abs(diff))} excedido`;
+    const diffColor = diff >= 0 ? '#4ade80' : '#f87171';
+    const pctClass = pct <= 85 ? 'up' : pct <= 100 ? 'neutral' : 'down';
+    
+    cardsHtml += `
+      <div class="jarra-card" style="border-left: 3px solid ${color}">
+        <div class="jarra-header">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div style="width:40px;height:40px;border-radius:10px;background:${color}20;color:${color};display:flex;align-items:center;justify-content:center;font-size:20px;">${icon}</div>
+            <div>
+              <div style="font-size:14px;font-weight:700;color:#f8fafc;">${name}</div>
+              <div style="font-size:11px;color:#64748b;">${vals.meses || 0} meses registrados</div>
+            </div>
+          </div>
+          <span class="stat-badge ${pctClass}" style="font-size:14px;">${pct.toFixed(1)}%</span>
+        </div>
+        <div style="margin:12px 0;">
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:#94a3b8;margin-bottom:6px;">
+            <span>Presup: ${fmtMoney(vals.presupuesto || 0)}</span>
+            <span style="color:${diffColor};font-weight:600;">${diffText}</span>
+            <span>Gast: ${fmtMoney(vals.gastado || 0)}</span>
+          </div>
+          <div style="height:10px;background:rgba(51,65,85,0.4);border-radius:5px;overflow:hidden;">
+            <div style="width:${Math.min(pct, 100)}%;height:100%;background:${color};border-radius:5px;transition:width 0.6s ease;"></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:16px;font-size:11px;color:#64748b;">
+          <span style="display:flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:50%;background:${color}40;"></span> Meta</span>
+          <span style="display:flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:50%;background:${color};"></span> Real</span>
+        </div>
+      </div>
+    `;
+  }
+  cardsContainer.innerHTML = cardsHtml;
+
+  // Charts
+  renderJarrasBarChart(year, resumen);
+  renderJarrasMonthlyChart(year, historial);
+}
+
+function onJarrasYearChange(el) {
+  jarrasYear = el.value;
+  renderJarras();
+}
+
+function renderJarrasBarChart(year, resumen) {
+  const ctx = getCanvas('jarrasBarChart');
+  if (!ctx) return;
+  if (jarrasCharts.bar) { jarrasCharts.bar.destroy(); jarrasCharts.bar = null; }
+
+  const labels = Object.keys(resumen);
+  const presupuestado = labels.map(n => resumen[n].presupuesto || 0);
+  const gastado = labels.map(n => resumen[n].gastado || 0);
+  const colors = labels.map(n => JARRA_COLORS[n] || '#64748b');
+
+  jarrasCharts.bar = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: 'Presupuesto',
+          data: presupuestado,
+          backgroundColor: colors.map(c => c + '60'),
+          borderColor: colors,
+          borderWidth: 1,
+          borderRadius: 6,
+          barPercentage: 0.7,
+          categoryPercentage: 0.8
+        },
+        {
+          label: 'Gastado',
+          data: gastado,
+          backgroundColor: colors,
+          borderRadius: 6,
+          barPercentage: 0.7,
+          categoryPercentage: 0.8
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'top', align: 'end', labels: { color: '#94a3b8', font: { size: 11 }, usePointStyle: true } },
+        tooltip: {
+          backgroundColor: 'rgba(15,23,42,0.95)',
+          titleColor: '#e2e8f0', bodyColor: '#e2e8f0',
+          borderColor: 'rgba(51,65,85,0.5)', borderWidth: 1,
+          callbacks: { label: (ctx) => ctx.dataset.label + ': ' + fmtMoney(ctx.parsed.y) }
+        }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 11, weight: '600' } } },
+        y: { grid: { color: 'rgba(51,65,85,0.2)' }, ticks: { color: '#64748b', font: { size: 10 }, callback: (v) => 'RD$' + (v / 1000).toFixed(0) + 'K' } }
+      }
+    }
+  });
+}
+
+function renderJarrasMonthlyChart(year, historial) {
+  const ctx = getCanvas('jarrasMonthlyChart');
+  if (!ctx) return;
+  if (jarrasCharts.monthly) { jarrasCharts.monthly.destroy(); jarrasCharts.monthly = null; }
+
+  const sorted = [...historial].reverse();
+  const labels = sorted.map(m => m.label);
+
+  const datasets = (jarrasData.jarras || []).map((nombre) => {
+    const color = JARRA_COLORS[nombre] || '#64748b';
+    return {
+      label: nombre,
+      data: sorted.map(m => (m.jarras && m.jarras[nombre]) ? m.jarras[nombre].gastado : 0),
+      borderColor: color,
+      backgroundColor: color + '10',
+      fill: false,
+      tension: 0.3,
+      pointRadius: 3,
+      pointHoverRadius: 6,
+      borderWidth: 2
+    };
+  });
+
+  jarrasCharts.monthly = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { intersect: false, mode: 'index' },
+      plugins: {
+        legend: { position: 'top', align: 'end', labels: { color: '#94a3b8', font: { size: 10 }, usePointStyle: true, boxWidth: 8 } },
+        tooltip: {
+          backgroundColor: 'rgba(15,23,42,0.95)',
+          titleColor: '#e2e8f0', bodyColor: '#e2e8f0',
+          borderColor: 'rgba(51,65,85,0.5)', borderWidth: 1,
+          callbacks: { label: (ctx) => ctx.dataset.label + ': ' + fmtMoney(ctx.parsed.y) }
+        }
+      },
+      scales: {
+        x: { type: 'category', grid: { display: false }, ticks: { color: '#64748b', font: { size: 10 }, maxTicksLimit: 12 } },
+        y: { grid: { color: 'rgba(51,65,85,0.2)' }, ticks: { color: '#64748b', font: { size: 10 }, callback: (v) => 'RD$' + (v / 1000).toFixed(0) + 'K' } }
+      }
+    }
+  });
+}

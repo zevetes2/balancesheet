@@ -1999,3 +1999,44 @@
         gap: 2px;
     }
 }
+/* === JARRAS === */
+.year-select {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid rgba(51,65,85,0.5);
+  background: rgba(15,23,42,0.8);
+  color: #e2e8f0;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+}
+.year-select:focus {
+  border-color: #3b82f6;
+}
+
+.jarras-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.jarra-card {
+  background: rgba(30,41,59,0.7);
+  border: 1px solid rgba(51,65,85,0.3);
+  border-radius: 12px;
+  padding: 16px;
+  transition: transform 0.2s, border-color 0.2s;
+}
+.jarra-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(51,65,85,0.6);
+}
+
+.jarra-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}

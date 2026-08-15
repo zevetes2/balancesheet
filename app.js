@@ -4589,7 +4589,30 @@ function renderJarrasMonthlyChart(year, historial) {
   if (jarrasCharts.monthly) { jarrasCharts.monthly.destroy(); jarrasCharts.monthly = null; }
 
   const sorted = [...historial].reverse();
-  const labels = sorted.map(m => m.label);
+  
+  // === FORMATEAR LABELS A CORTO: "Ago '26" ===
+  const mesesEs = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const mesesEn = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  
+  const labels = sorted.map(m => {
+    const lbl = m.label || '';
+    
+    // Caso 1: Ya es "Aug'26" → traducir mes a español
+    if (typeof lbl === 'string' && lbl.includes("'")) {
+      const [mon, yr] = lbl.split("'");
+      const idx = mesesEn.indexOf(mon);
+      if (idx >= 0) return mesesEs[idx] + "'" + yr;
+      return lbl;
+    }
+    
+    // Caso 2: Es fecha larga (Date string) → parsear a corto
+    const d = new Date(lbl);
+    if (!isNaN(d.getTime())) {
+      return mesesEs[d.getMonth()] + "'" + String(d.getFullYear()).slice(-2);
+    }
+    
+    return lbl;
+  });
 
   const datasets = (jarrasData.jarras || []).map((nombre) => {
     const color = JARRA_COLORS[nombre] || '#64748b';
@@ -4614,17 +4637,44 @@ function renderJarrasMonthlyChart(year, historial) {
       maintainAspectRatio: false,
       interaction: { intersect: false, mode: 'index' },
       plugins: {
-        legend: { position: 'top', align: 'end', labels: { color: '#94a3b8', font: { size: 10 }, usePointStyle: true, boxWidth: 8 } },
+        legend: { 
+          position: 'top', 
+          align: 'end', 
+          labels: { color: '#94a3b8', font: { size: 10 }, usePointStyle: true, boxWidth: 8 } 
+        },
         tooltip: {
           backgroundColor: 'rgba(15,23,42,0.95)',
-          titleColor: '#e2e8f0', bodyColor: '#e2e8f0',
-          borderColor: 'rgba(51,65,85,0.5)', borderWidth: 1,
-          callbacks: { label: (ctx) => ctx.dataset.label + ': ' + fmtMoney(ctx.parsed.y) }
+          titleColor: '#e2e8f0', 
+          bodyColor: '#e2e8f0',
+          borderColor: 'rgba(51,65,85,0.5)', 
+          borderWidth: 1,
+          callbacks: {
+            // ← SOBRESCRIBIR TÍTULO: muestra la label limpia, no la fecha parseada
+            title: (items) => items[0]?.label || '',
+            label: (ctx) => ctx.dataset.label + ': ' + fmtMoney(ctx.parsed.y)
+          }
         }
       },
       scales: {
-        x: { type: 'category', grid: { display: false }, ticks: { color: '#64748b', font: { size: 10 }, maxTicksLimit: 12 } },
-        y: { grid: { color: 'rgba(51,65,85,0.2)' }, ticks: { color: '#64748b', font: { size: 10 }, callback: (v) => 'RD$' + (v / 1000).toFixed(0) + 'K' } }
+        x: { 
+          type: 'category', 
+          grid: { display: false }, 
+          ticks: { 
+            color: '#64748b', 
+            font: { size: 10 }, 
+            maxTicksLimit: 12,
+            maxRotation: 0,      // ← Sin rotación
+            autoSkip: true       // ← Salta labels si hay muchos
+          } 
+        },
+        y: { 
+          grid: { color: 'rgba(51,65,85,0.2)' }, 
+          ticks: { 
+            color: '#64748b', 
+            font: { size: 10 }, 
+            callback: (v) => 'RD$' + (v / 1000).toFixed(0) + 'K' 
+          } 
+        }
       }
     }
   });

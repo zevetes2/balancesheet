@@ -2040,3 +2040,123 @@
   align-items: center;
   margin-bottom: 12px;
 }
+/* === JARRAS MENSUAL DETALLE === */
+.jarras-monthly-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.jarra-month-card {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(51, 65, 85, 0.3);
+  border-radius: 12px;
+  padding: 16px;
+  transition: border-color 0.2s;
+}
+
+.jarra-month-card:hover {
+  border-color: rgba(51, 65, 85, 0.6);
+}
+
+.jarra-month-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.3);
+}
+
+.jarra-month-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.jarra-month-totals {
+  text-align: right;
+}
+
+.jarra-month-total-p {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.jarra-month-total-g {
+  font-size: 13px;
+  font-weight: 700;
+  color: #f87171;
+}
+
+.jarra-month-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+}
+
+.jarra-month-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.jarra-month-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.jarra-month-name-sm {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.jarra-month-bar-bg {
+  height: 6px;
+  background: rgba(51, 65, 85, 0.4);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 3px;
+}
+
+.jarra-month-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+
+.jarra-month-values {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.jarra-month-pct {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.jarra-month-pct.good { color: #4ade80; }
+.jarra-month-pct.warn { color: #fbbf24; }
+.jarra-month-pct.danger { color: #f87171; }
+
+.jarra-month-amount {
+  font-size: 11px;
+  color: #64748b;
+}
+
+@media (max-width: 640px) {
+  .jarras-monthly-grid {
+    grid-template-columns: 1fr;
+  }
+}

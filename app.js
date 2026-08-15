@@ -4520,6 +4520,7 @@ function renderJarras() {
   // Charts
   renderJarrasBarChart(year, resumen);
   renderJarrasMonthlyChart(year, historial);
+  renderJarrasMonthlyDetail(year);
 }
 
 function onJarrasYearChange(el) {
@@ -4627,4 +4628,81 @@ function renderJarrasMonthlyChart(year, historial) {
       }
     }
   });
+}
+
+function renderJarrasMonthlyDetail(year) {
+    const container = document.getElementById('jarrasMonthlyDetail');
+    const label = document.getElementById('jarrasMonthYearLabel');
+    if (label) label.textContent = year;
+    if (!container) return;
+
+    const historial = (jarrasData.historialMensual || []).filter(m => m.year === year);
+    // Ordenar cronológicamente (el CSV viene más reciente primero)
+    const sorted = [...historial].reverse();
+
+    if (sorted.length === 0) {
+        container.innerHTML = '<div style="color:#64748b;text-align:center;padding:24px;">Sin datos mensuales para ' + year + '</div>';
+        return;
+    }
+
+    const mesesNombres = {
+        'Jan': 'Enero', 'Feb': 'Febrero', 'Mar': 'Marzo', 'Apr': 'Abril',
+        'May': 'Mayo', 'Jun': 'Junio', 'Jul': 'Julio', 'Aug': 'Agosto',
+        'Sep': 'Septiembre', 'Oct': 'Octubre', 'Nov': 'Noviembre', 'Dec': 'Diciembre'
+    };
+
+    let html = '';
+
+    sorted.forEach(mes => {
+        const mesNombre = mesesNombres[mes.month] || mes.month;
+        const displayName = mesNombre + " '" + mes.year.slice(2);
+
+        // Totales del mes
+        let totalP = 0, totalG = 0;
+        Object.values(mes.jarras || {}).forEach(j => {
+            totalP += j.presupuesto || 0;
+            totalG += j.gastado || 0;
+        });
+        const pctGlobal = totalP > 0 ? (totalG / totalP * 100) : 0;
+
+        html += `
+            <div class="jarra-month-card">
+                <div class="jarra-month-header">
+                    <div class="jarra-month-name">${displayName}</div>
+                    <div class="jarra-month-totals">
+                        <div class="jarra-month-total-p">Presup: ${fmtMoney(totalP)}</div>
+                        <div class="jarra-month-total-g">Gast: ${fmtMoney(totalG)} · ${pctGlobal.toFixed(0)}%</div>
+                    </div>
+                </div>
+        `;
+
+        // Las 6 jarras
+        (jarrasData.jarras || []).forEach(nombre => {
+            const j = mes.jarras[nombre] || { presupuesto: 0, gastado: 0, pctUsado: 0 };
+            const color = JARRA_COLORS[nombre] || '#64748b';
+            const icon = JARRA_ICONS[nombre] || '💰';
+            const pct = j.pctUsado || 0;
+            const pctClass = pct <= 85 ? 'good' : pct <= 100 ? 'warn' : 'danger';
+
+            html += `
+                <div class="jarra-month-item">
+                    <div class="jarra-month-icon" style="background:${color}20;color:${color};">${icon}</div>
+                    <div class="jarra-month-info">
+                        <div class="jarra-month-name-sm">${nombre}</div>
+                        <div class="jarra-month-bar-bg">
+                            <div class="jarra-month-bar-fill" style="width:${Math.min(pct, 100)}%;background:${color};"></div>
+                        </div>
+                    </div>
+                    <div class="jarra-month-values">
+                        <div class="jarra-month-pct ${pctClass}">${pct.toFixed(0)}%</div>
+                        <div class="jarra-month-amount">${fmtMoney(j.gastado)} / ${fmtMoney(j.presupuesto)}</div>
+                    </div>
+                </div>
+            `;
+        });
+
+        html += `</div>`;
+    });
+
+    container.innerHTML = html;
 }

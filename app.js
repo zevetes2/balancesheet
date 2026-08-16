@@ -51,7 +51,7 @@
         'UC United Capital': '#FF6F00', 'Larimar': '#FF6F00', 'Cesar Iglesias': '#FF6F00',
         'SIVEMBC263': '#FF6F00', 'Certificado Banreserva': '#FF6F00',
         'Alcanza Inversiones': '#FF6F00', 'Haina Investment 2034': '#FF6F00',
-        'Fondo de Fondos Altio': '#FF6F00', 'TradeStation': '#FF6F00'
+        'Fondo de Fondos Altio': '#FF6F00', 'TradeStation': '#FF6F00', 'BHD - Modeco': '#FF6F00', 'Cash - Modeco': '#FF6F00', 'Cash USD - Modeco': '#FF6F00',
     };
 
 
@@ -117,7 +117,8 @@ function getCreditLimit(name) {
         'Crédito BHD Premia DOP': 41000,
         'Extra Limite Caribe': 40500,
         'Credimás Banreservas': 50000,
-        'Prestamo Popular': 164000
+        'Prestamo Popular': 164000,
+        'Prestamo Modeco': 230000,
     };
     if (limitsUSD[name]) return limitsUSD[name] * tasa;
     return limitsDOP[name] || 0;
@@ -133,7 +134,7 @@ const TARJETAS_NOMBRES = [
 ];
 
 const LINEAS_NOMBRES = ['Extra Limite Caribe', 'Credimás Banreservas'];
-const PRESTAMOS_NOMBRES = ['Prestamo Popular'];
+const PRESTAMOS_NOMBRES = ['Prestamo Popular', 'Prestamo Modeco'];
 
 function getDeuda(data) {
     // En la hoja: positivo = deuda (gastado), negativo = crédito a favor

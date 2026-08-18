@@ -15,6 +15,38 @@
     let appData = null;
     let charts = {};
 
+    // === MODECO: CLASIFICACIÓN Y COLORES ===
+    const MODECO_GASTO_CLASIFICACION = {
+        'Compras y Materia Prima - COGS': 'COGS',
+        'Logística Directa de Entrega - COGS': 'COGS',
+        'Mermas / Desperdicio - COGS': 'COGS',
+        'Reparaciones mantenimiento - COGS': 'COGS',
+        'Recursos Humanos - OPEX': 'OPEX',
+        'Viajes y Representación - OPEX': 'OPEX',
+        'Operaciones y Planta - OPEX': 'OPEX',
+        'Desarrollo y Formacion - OPEX': 'OPEX',
+        'Administracion y Legales - OPEX': 'OPEX',
+        'Tecnología y Software - OPEX': 'OPEX',
+        'Marketing y Comercializacion - OPEX': 'OPEX',
+        'Maquinaria, Herramientas y Muebles - CAPEX': 'CAPEX',
+        'Fondo Misiones - Modeco': 'Modeco',
+        'Impuestos - Modeco': 'Modeco',
+        'Intereses y Comisiones Bancarias - Modeco': 'Modeco',
+        'Depreciacion de Activos - Modeco': 'Modeco',
+        'Otros Gastos - Modeco': 'Modeco'
+    };
+
+    const MODECO_CLASIF_COLORS = {
+        COGS: '#f97316',
+        OPEX: '#3b82f6',
+        CAPEX: '#8b5cf6',
+        Modeco: '#f59e0b',
+        Ingreso: '#22c55e'
+    };
+
+    let modecoData = null;
+    let modecoLoadingPromise = null;
+
     // === CACHE LOCAL ===
     const BS_CACHE_KEY = 'bs_cache_v2';
     const BS_CACHE_TTL = 1000 * 60 * 30; // 30 minutos
@@ -2616,6 +2648,9 @@ function renderRatiosRadarChart() {
             'growthRateChart','invGrowthRateChart','incomeVsExpenseChart',
             'projectionChart','ratiosRadarChart',
             'jarrasBarChart','jarrasMonthlyChart',
+            'modecoIngresosChart','modecoGastosClasificacionChart',
+            'modecoIngresosVsGastosChart','modecoWaterfallChart',
+            'modecoBalanceChart','modecoBalanceEvolutionChart',
             'dbGastosTotalChart','dbGastosTopCurrentChart','budgetPreviewChart'
         ];
         chartIds.forEach(id => {
@@ -2642,6 +2677,7 @@ function renderRatiosRadarChart() {
             case 'ratios': break; // Los ratios se manejan en renderChartsForTab
             case 'db-gastos': renderDBGastosTab(); break;
             case 'jarras': renderJarrasTab(); break;
+            case 'modeco': renderModecoTab(); break;
             case 'budget': setTimeout(initBudgetEditor, 100); break;
         }
     }
@@ -2663,6 +2699,8 @@ function renderRatiosRadarChart() {
         invalidateRenderedTabs();
         // Limpiar cache forzando carga fresca
         localStorage.removeItem(BS_CACHE_KEY);
+        modecoData = null;
+        modecoLoadingPromise = null;
         await loadData();
         document.getElementById('loading').classList.add('hidden');
     }
@@ -4756,4 +4794,705 @@ function renderJarrasMonthlyDetail(year) {
     });
 
     container.innerHTML = html;
+}
+
+// ============================================================================
+// MODECO — ESTADO DE RESULTADOS Y BALANCE
+// ============================================================================
+
+function loadModecoData() {
+  if (modecoData) return Promise.resolve(modecoData);
+  if (modecoLoadingPromise) return modecoLoadingPromise;
+
+  modecoLoadingPromise = new Promise((resolve, reject) => {
+    const callbackName = 'modecoCallback_' + Date.now();
+    const script = document.createElement('script');
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error('Timeout JSONP (getModeco)'));
+    }, 30000);
+
+    function cleanup() {
+      if (script.parentNode) script.parentNode.removeChild(script);
+      delete window[callbackName];
+      clearTimeout(timeout);
+      modecoLoadingPromise = null;
+    }
+
+    window[callbackName] = (data) => {
+      if (!data) {
+        cleanup();
+        reject(new Error('Respuesta vacía del servidor'));
+        return;
+      }
+      if (data.error) {
+        cleanup();
+        reject(new Error(data.message || 'Error del servidor'));
+        return;
+      }
+      modecoData = data;
+      cleanup();
+      resolve(data);
+    };
+
+    script.onerror = () => {
+      cleanup();
+      reject(new Error('Error de red JSONP (getModeco)'));
+    };
+
+    script.src = CONFI.API_URL + '?action=getModeco&callback=' + callbackName;
+    document.head.appendChild(script);
+  });
+
+  return modecoLoadingPromise;
+}
+
+async function renderModecoTab() {
+  const statsEl = document.getElementById('modecoStats');
+  if (!statsEl) return;
+
+  statsEl.innerHTML = `
+    <div class="stat-card" style="grid-column:1/-1">
+      <div class="stat-value" style="font-size:14px;color:#64748b">⏳ Cargando Modeco...</div>
+    </div>
+  `;
+
+  try {
+    if (!modecoData) await loadModecoData();
+
+    renderModecoStats();
+    renderModecoIngresosChart();
+    renderModecoGastosPorClasifChart();
+    renderModecoIngresosVsGastosChart();
+    renderModecoWaterfallChart();
+    renderModecoBalanceChart();
+    renderModecoCategoriasList();
+  } catch (e) {
+    console.error('Error cargando MODECO:', e);
+    statsEl.innerHTML = `
+      <div class="stat-card" style="grid-column:1/-1">
+        <div class="stat-value" style="font-size:16px;color:#f87171">❌ ${e.message}</div>
+        <div class="stat-sub">Verifica que el backend tenga el case getModeco y la hoja DB_MODECO</div>
+      </div>
+    `;
+  }
+}
+
+function getModecoMesActual() {
+  return modecoData?.resumen?.mesActual || modecoData?.meses?.[0] || null;
+}
+
+function getModecoMesAnterior() {
+  return modecoData?.resumen?.mesAnterior || modecoData?.meses?.[1] || null;
+}
+
+function getModecoBalanceActual() {
+  const b = modecoData?.balance || {};
+  const activos =
+    (b.bhdModeco?.current || 0) +
+    (b.cashModeco?.current || 0) +
+    (b.cashUsdModeco?.current || 0);
+  const prestamo = b.prestamoModeco?.current || 0;
+
+  return {
+    activos,
+    prestamo,
+    patrimonio: activos - prestamo
+  };
+}
+
+function getModecoBalanceAnterior() {
+  const b = modecoData?.balance || {};
+  const activos =
+    (b.bhdModeco?.previous || 0) +
+    (b.cashModeco?.previous || 0) +
+    (b.cashUsdModeco?.previous || 0);
+  const prestamo = b.prestamoModeco?.previous || 0;
+
+  return {
+    activos,
+    prestamo,
+    patrimonio: activos - prestamo
+  };
+}
+
+function getModecoClasificacion(nombre) {
+  if (MODECO_GASTO_CLASIFICACION[nombre]) return MODECO_GASTO_CLASIFICACION[nombre];
+  if (nombre.includes('- COGS')) return 'COGS';
+  if (nombre.includes('- OPEX')) return 'OPEX';
+  if (nombre.includes('- CAPEX')) return 'CAPEX';
+  if (nombre.startsWith('Modeco - ')) return 'Ingreso';
+  return 'Modeco';
+}
+
+function renderModecoStats() {
+  const mes = getModecoMesActual();
+  const mesAnterior = getModecoMesAnterior();
+  const balance = getModecoBalanceActual();
+  const balanceAnterior = getModecoBalanceAnterior();
+
+  if (!mes) {
+    document.getElementById('modecoStats').innerHTML = `
+      <div class="stat-card" style="grid-column:1/-1">
+        <div class="stat-value" style="font-size:16px;color:#94a3b8">Sin datos mensuales de Modeco</div>
+      </div>
+    `;
+    return;
+  }
+
+  const utilidad = mes.utilidadNeta || 0;
+  const margen = mes.margenNeto || 0;
+  const patrimonioChange = balance.patrimonio - balanceAnterior.patrimonio;
+  const patrimonioChangePct = balanceAnterior.patrimonio !== 0
+    ? (patrimonioChange / Math.abs(balanceAnterior.patrimonio)) * 100
+    : 0;
+
+  document.getElementById('modecoMeta').textContent =
+    `${mes.mes || '—'} · ${modecoData.metadata?.totalMonths || 0} meses`;
+
+  document.getElementById('modecoStats').innerHTML = `
+    <div class="stat-card success">
+      <div class="stat-header">
+        <span class="stat-label">Ingresos</span>
+        ${mesAnterior ? getChangeBadge(mesAnterior.ingresos !== 0 ? ((mes.ingresos - mesAnterior.ingresos) / Math.abs(mesAnterior.ingresos)) * 100 : 0) : ''}
+      </div>
+      <div class="stat-value">${fmtMoney(mes.ingresos || 0)}</div>
+      <div class="stat-sub">${mes.mes || 'Mes actual'}</div>
+      <div class="stat-bar" style="--bar-width:100%"></div>
+    </div>
+
+    <div class="stat-card warning">
+      <div class="stat-header">
+        <span class="stat-label">Gastos</span>
+        ${mesAnterior ? getChangeBadge(mesAnterior.gastos !== 0 ? ((mes.gastos - mesAnterior.gastos) / Math.abs(mesAnterior.gastos)) * 100 : 0) : ''}
+      </div>
+      <div class="stat-value" style="color:#f87171">${fmtMoney(mes.gastos || 0)}</div>
+      <div class="stat-sub">COGS ${fmtMoney(mes.clasificaciones?.COGS || 0)} · OPEX ${fmtMoney(mes.clasificaciones?.OPEX || 0)}</div>
+      <div class="stat-bar" style="--bar-width:${mes.ingresos > 0 ? Math.min((mes.gastos / mes.ingresos) * 100, 100).toFixed(1) : 0}%"></div>
+    </div>
+
+    <div class="stat-card ${utilidad >= 0 ? 'success' : 'warning'}">
+      <div class="stat-header">
+        <span class="stat-label">Utilidad Neta</span>
+        ${getChangeBadge(margen)}
+      </div>
+      <div class="stat-value" style="color:${utilidad >= 0 ? '#4ade80' : '#f87171'}">${fmtMoney(utilidad)}</div>
+      <div class="stat-sub">Antes de CAPEX · Flujo post-CAPEX: ${fmtMoney(mes.flujoDespuesCapex || 0)}</div>
+      <div class="stat-bar" style="--bar-width:${Math.max(0, Math.min(margen, 100)).toFixed(1)}%"></div>
+    </div>
+
+    <div class="stat-card info">
+      <div class="stat-header">
+        <span class="stat-label">Margen Neto</span>
+      </div>
+      <div class="stat-value" style="color:${margen >= 15 ? '#4ade80' : margen >= 0 ? '#60a5fa' : '#f87171'}">${margen.toFixed(2)}%</div>
+      <div class="stat-sub">Bruto: ${(mes.margenBruto || 0).toFixed(1)}% · Operativo: ${(mes.margenOperativo || 0).toFixed(1)}%</div>
+      <div class="stat-bar" style="--bar-width:${Math.max(0, Math.min(margen, 100)).toFixed(1)}%"></div>
+    </div>
+
+    <div class="stat-card ${balance.patrimonio >= 0 ? 'success' : 'warning'}">
+      <div class="stat-header">
+        <span class="stat-label">Patrimonio Modeco</span>
+        ${getChangeBadge(patrimonioChangePct)}
+      </div>
+      <div class="stat-value" style="color:${balance.patrimonio >= 0 ? '#4ade80' : '#f87171'}">${fmtMoney(balance.patrimonio)}</div>
+      <div class="stat-sub">Activos ${fmtMoney(balance.activos)} − préstamo ${fmtMoney(balance.prestamo)}</div>
+      <div class="stat-bar" style="--bar-width:${balance.activos > 0 ? Math.max(0, Math.min((balance.patrimonio / balance.activos) * 100, 100)).toFixed(1) : 0}%"></div>
+    </div>
+  `;
+}
+
+function renderModecoIngresosChart() {
+  const container = document.getElementById('modecoIngresosChart');
+  if (!container) return;
+
+  const categorias = Object.values(modecoData?.categorias || {})
+    .filter(c => (c.clasificacion || getModecoClasificacion(c.name)) === 'Ingreso')
+    .filter(c => (c.current || 0) > 0)
+    .sort((a, b) => b.current - a.current);
+
+  if (categorias.length === 0) {
+    container.innerHTML = '<div style="color:#64748b;text-align:center;padding:60px 16px;">Sin ingresos registrados en el mes actual</div>';
+    charts.modecoIngresos = null;
+    return;
+  }
+
+  const ctx = getCanvas('modecoIngresosChart');
+  if (!ctx) return;
+
+  charts.modecoIngresos = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: categorias.map(c => c.name.replace('Modeco - ', '')),
+      datasets: [{
+        label: 'Ingresos',
+        data: categorias.map(c => c.current || 0),
+        backgroundColor: categorias.map((_, i) => [
+          '#22c55e', '#10b981', '#84cc16', '#14b8a6', '#4ade80'
+        ][i % 5]),
+        borderRadius: 8,
+        borderSkipped: false
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(15,23,42,0.95)',
+          titleColor: '#e2e8f0',
+          bodyColor: '#e2e8f0',
+          borderColor: 'rgba(51,65,85,0.5)',
+          borderWidth: 1,
+          callbacks: {
+            label: (ctx) => fmtMoney(ctx.parsed.x)
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: 'rgba(51,65,85,0.2)' },
+          ticks: {
+            color: '#64748b',
+            callback: (v) => 'RD$' + (v / 1000).toFixed(0) + 'K'
+          }
+        },
+        y: {
+          grid: { display: false },
+          ticks: { color: '#94a3b8', font: { size: 11 } }
+        }
+      }
+    }
+  });
+}
+
+function renderModecoGastosPorClasifChart() {
+  const container = document.getElementById('modecoGastosClasificacionChart');
+  if (!container) return;
+
+  const mes = getModecoMesActual();
+  const clasif = mes?.clasificaciones || {};
+  const labels = ['COGS', 'OPEX', 'CAPEX', 'Modeco'];
+  const values = labels.map(k => clasif[k] || 0);
+
+  if (values.every(v => v === 0)) {
+    container.innerHTML = '<div style="color:#64748b;text-align:center;padding:60px 16px;">Sin gastos registrados en el mes actual</div>';
+    charts.modecoGastosClasif = null;
+    return;
+  }
+
+  const ctx = getCanvas('modecoGastosClasificacionChart');
+  if (!ctx) return;
+
+  charts.modecoGastosClasif = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{
+        data: values,
+        backgroundColor: labels.map(k => MODECO_CLASIF_COLORS[k]),
+        borderColor: '#0f172a',
+        borderWidth: 3,
+        hoverOffset: 8
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: '62%',
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {
+            color: '#94a3b8',
+            usePointStyle: true,
+            boxWidth: 8,
+            padding: 16
+          }
+        },
+        tooltip: {
+          backgroundColor: 'rgba(15,23,42,0.95)',
+          titleColor: '#e2e8f0',
+          bodyColor: '#e2e8f0',
+          callbacks: {
+            label: (ctx) => {
+              const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+              const pct = total > 0 ? (ctx.parsed / total) * 100 : 0;
+              return `${ctx.label}: ${fmtMoney(ctx.parsed)} (${pct.toFixed(1)}%)`;
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+function renderModecoIngresosVsGastosChart() {
+  const container = document.getElementById('modecoIngresosVsGastosChart');
+  if (!container) return;
+
+  const meses = [...(modecoData?.meses || [])].reverse();
+  if (meses.length === 0) {
+    container.innerHTML = '<div style="color:#64748b;text-align:center;padding:60px 16px;">Sin historial mensual</div>';
+    charts.modecoIngVsGas = null;
+    return;
+  }
+
+  const ctx = getCanvas('modecoIngresosVsGastosChart');
+  if (!ctx) return;
+
+  charts.modecoIngVsGas = new Chart(ctx, {
+    data: {
+      labels: meses.map(m => formatShortDate(m.mes)),
+      datasets: [
+        {
+          type: 'bar',
+          label: 'Ingresos',
+          data: meses.map(m => m.ingresos || 0),
+          backgroundColor: 'rgba(34,197,94,0.75)',
+          borderRadius: 6,
+          borderSkipped: false
+        },
+        {
+          type: 'bar',
+          label: 'Gastos',
+          data: meses.map(m => m.gastos || 0),
+          backgroundColor: 'rgba(239,68,68,0.75)',
+          borderRadius: 6,
+          borderSkipped: false
+        },
+        {
+          type: 'line',
+          label: 'Utilidad Neta',
+          data: meses.map(m => m.utilidadNeta || 0),
+          borderColor: '#3b82f6',
+          backgroundColor: '#3b82f6',
+          tension: 0.3,
+          pointRadius: 3,
+          pointHoverRadius: 5
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          position: 'top',
+          align: 'end',
+          labels: { color: '#94a3b8', usePointStyle: true, boxWidth: 8 }
+        },
+        tooltip: {
+          backgroundColor: 'rgba(15,23,42,0.95)',
+          titleColor: '#e2e8f0',
+          bodyColor: '#e2e8f0',
+          callbacks: {
+            label: (ctx) => `${ctx.dataset.label}: ${fmtMoney(ctx.parsed.y)}`
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { color: '#64748b', maxTicksLimit: 12 }
+        },
+        y: {
+          grid: { color: 'rgba(51,65,85,0.2)' },
+          ticks: {
+            color: '#64748b',
+            callback: (v) => 'RD$' + (v / 1000).toFixed(0) + 'K'
+          }
+        }
+      }
+    }
+  });
+}
+
+function renderModecoWaterfallChart() {
+  const container = document.getElementById('modecoWaterfallChart');
+  if (!container) return;
+
+  const mes = getModecoMesActual();
+  if (!mes) {
+    container.innerHTML = '<div style="color:#64748b;text-align:center;padding:60px 16px;">Sin datos para la cascada</div>';
+    charts.modecoWaterfall = null;
+    return;
+  }
+
+  const ingresos = mes.ingresos || 0;
+  const cogs = mes.clasificaciones?.COGS || 0;
+  const opex = mes.clasificaciones?.OPEX || 0;
+  const gastosModeco = mes.clasificaciones?.Modeco || 0;
+  const despuesCogs = ingresos - cogs;
+  const despuesOpex = despuesCogs - opex;
+  const utilidadNeta = despuesOpex - gastosModeco;
+
+  const labels = ['Ingresos', 'COGS', 'OPEX', 'Modeco', 'Utilidad Neta'];
+  const ranges = [
+    [0, ingresos],
+    [despuesCogs, ingresos],
+    [despuesOpex, despuesCogs],
+    [utilidadNeta, despuesOpex],
+    [Math.min(0, utilidadNeta), Math.max(0, utilidadNeta)]
+  ];
+  const colors = [
+    '#22c55e',
+    MODECO_CLASIF_COLORS.COGS,
+    MODECO_CLASIF_COLORS.OPEX,
+    MODECO_CLASIF_COLORS.Modeco,
+    utilidadNeta >= 0 ? '#3b82f6' : '#ef4444'
+  ];
+
+  const ctx = getCanvas('modecoWaterfallChart');
+  if (!ctx) return;
+
+  charts.modecoWaterfall = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Cascada',
+        data: ranges,
+        backgroundColor: colors,
+        borderRadius: 8,
+        borderSkipped: false
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(15,23,42,0.95)',
+          titleColor: '#e2e8f0',
+          bodyColor: '#e2e8f0',
+          callbacks: {
+            label: (ctx) => {
+              const range = ctx.raw;
+              const value = Math.abs(range[1] - range[0]);
+              return `${ctx.label}: ${fmtMoney(value)}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { color: '#94a3b8', font: { size: 11, weight: '600' } }
+        },
+        y: {
+          grid: { color: 'rgba(51,65,85,0.2)' },
+          ticks: {
+            color: '#64748b',
+            callback: (v) => 'RD$' + (v / 1000).toFixed(0) + 'K'
+          }
+        }
+      }
+    }
+  });
+}
+
+function renderModecoBalanceChart() {
+  const container = document.getElementById('modecoBalanceChart');
+  if (!container) return;
+
+  const b = modecoData?.balance || {};
+  const labels = ['BHD - Modeco', 'Cash - Modeco', 'Cash USD - Modeco', 'Préstamo Modeco'];
+  const values = [
+    b.bhdModeco?.current || 0,
+    b.cashModeco?.current || 0,
+    b.cashUsdModeco?.current || 0,
+    b.prestamoModeco?.current || 0
+  ];
+
+  if (values.every(v => v === 0)) {
+    container.innerHTML = '<div style="color:#64748b;text-align:center;padding:60px 16px;">Sin datos de balance</div>';
+    charts.modecoBalance = null;
+  } else {
+    const ctx = getCanvas('modecoBalanceChart');
+    if (ctx) {
+      charts.modecoBalance = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+          labels,
+          datasets: [{
+            data: values,
+            backgroundColor: ['#3b82f6', '#22c55e', '#14b8a6', '#ef4444'],
+            borderColor: '#0f172a',
+            borderWidth: 3,
+            hoverOffset: 8
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '60%',
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: { color: '#94a3b8', usePointStyle: true, boxWidth: 8 }
+            },
+            tooltip: {
+              backgroundColor: 'rgba(15,23,42,0.95)',
+              titleColor: '#e2e8f0',
+              bodyColor: '#e2e8f0',
+              callbacks: {
+                label: (ctx) => `${ctx.label}: ${fmtMoney(ctx.parsed)}`
+              }
+            }
+          }
+        }
+      });
+    }
+  }
+
+  renderModecoBalanceEvolutionChart();
+}
+
+function renderModecoBalanceEvolutionChart() {
+  const container = document.getElementById('modecoBalanceEvolutionChart');
+  if (!container) return;
+
+  const b = modecoData?.balance || {};
+  const baseHistory = b.bhdModeco?.history || [];
+
+  if (baseHistory.length === 0) {
+    container.innerHTML = '<div style="color:#64748b;text-align:center;padding:60px 16px;">Sin evolución de balance</div>';
+    charts.modecoBalanceEvolution = null;
+    return;
+  }
+
+  const labels = baseHistory.map(h => formatShortDate(h.date));
+  const activos = baseHistory.map((_, i) =>
+    (b.bhdModeco?.history?.[i]?.value || 0) +
+    (b.cashModeco?.history?.[i]?.value || 0) +
+    (b.cashUsdModeco?.history?.[i]?.value || 0)
+  );
+  const prestamo = baseHistory.map((_, i) => b.prestamoModeco?.history?.[i]?.value || 0);
+  const patrimonio = activos.map((v, i) => v - prestamo[i]);
+
+  const ctx = getCanvas('modecoBalanceEvolutionChart');
+  if (!ctx) return;
+
+  charts.modecoBalanceEvolution = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Activos Modeco',
+          data: activos,
+          borderColor: '#22c55e',
+          backgroundColor: 'rgba(34,197,94,0.08)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 2
+        },
+        {
+          label: 'Préstamo',
+          data: prestamo,
+          borderColor: '#ef4444',
+          backgroundColor: 'rgba(239,68,68,0.08)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 2
+        },
+        {
+          label: 'Patrimonio Modeco',
+          data: patrimonio,
+          borderColor: '#3b82f6',
+          backgroundColor: '#3b82f6',
+          tension: 0.3,
+          pointRadius: 3
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          position: 'top',
+          align: 'end',
+          labels: { color: '#94a3b8', usePointStyle: true, boxWidth: 8 }
+        },
+        tooltip: {
+          backgroundColor: 'rgba(15,23,42,0.95)',
+          titleColor: '#e2e8f0',
+          bodyColor: '#e2e8f0',
+          callbacks: {
+            label: (ctx) => `${ctx.dataset.label}: ${fmtMoney(ctx.parsed.y)}`
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { color: '#64748b', maxTicksLimit: 10 }
+        },
+        y: {
+          grid: { color: 'rgba(51,65,85,0.2)' },
+          ticks: {
+            color: '#64748b',
+            callback: (v) => 'RD$' + (v / 1000).toFixed(0) + 'K'
+          }
+        }
+      }
+    }
+  });
+}
+
+function renderModecoCategoriasList() {
+  const container = document.getElementById('modecoCategoriasList');
+  if (!container) return;
+
+  const categorias = Object.values(modecoData?.categorias || {})
+    .filter(c => (c.clasificacion || getModecoClasificacion(c.name)) !== 'Ingreso')
+    .filter(c => (c.current || 0) > 0)
+    .sort((a, b) => b.current - a.current);
+
+  if (categorias.length === 0) {
+    container.innerHTML = '<div style="color:#64748b;text-align:center;padding:24px;">Sin gastos en el mes actual</div>';
+    return;
+  }
+
+  const total = categorias.reduce((sum, c) => sum + (c.current || 0), 0);
+
+  container.innerHTML = `
+    <div class="asset-list">
+      ${categorias.map(cat => {
+        const clasif = cat.clasificacion || getModecoClasificacion(cat.name);
+        const color = MODECO_CLASIF_COLORS[clasif] || MODECO_CLASIF_COLORS.Modeco;
+        const pct = total > 0 ? (cat.current / total) * 100 : 0;
+        const badgeClass = clasif.toLowerCase();
+
+        return `
+          <div class="asset-item">
+            <div class="asset-icon-wrap" style="background:${color}20;color:${color}">
+              ${clasif.charAt(0)}
+            </div>
+            <div class="asset-info">
+              <div class="asset-name">${cat.name}</div>
+              <div class="asset-meta">
+                <span class="classif-badge ${badgeClass}">${clasif}</span>
+                <span style="margin-left:8px;">${pct.toFixed(1)}% del gasto mensual</span>
+              </div>
+              <div class="asset-progress">
+                <div class="asset-progress-fill" style="width:${Math.min(pct, 100)}%;background:${color}"></div>
+              </div>
+            </div>
+            <div class="asset-value">
+              <div class="asset-amount">${fmtMoney(cat.current)}</div>
+              <div class="asset-pct ${cat.change >= 0 ? 'negative' : 'positive'}">${fmtPct(cat.changePct || 0)}</div>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
 }

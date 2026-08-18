@@ -58,6 +58,7 @@
       <button class="tab-btn" data-tab="income" onclick="switchTab('income')">Ingresos</button>
       <button class="tab-btn" data-tab="expenses" onclick="switchTab('expenses')">Gastos</button>
       <button class="tab-btn" data-tab="jarras" onclick="switchTab('jarras')">💰 Jarras</button>
+      <button class="tab-btn" data-tab="modeco" onclick="switchTab('modeco')">🏢 Modeco</button>
       <button class="tab-btn" data-tab="budget" onclick="switchTab('budget')">Presupuesto</button>
       <button class="tab-btn" data-tab="analytics" onclick="switchTab('analytics')">Análisis</button>
       <button class="tab-btn" data-tab="ratios" onclick="switchTab('ratios')">Ratios</button>
@@ -341,6 +342,78 @@
 
         
     </div>
+
+    <!-- TAB: MODECO -->
+    <section id="modeco" class="section">
+      <h2 class="section-title">🏢 Modeco</h2>
+      <p class="section-subtitle">Estado de resultados, clasificación contable y balance operativo — <span id="modecoMeta">—</span></p>
+
+      <div class="stats-grid" id="modecoStats"></div>
+
+      <div class="two-col">
+        <div class="chart-card">
+          <div class="chart-header">
+            <div>
+              <div class="chart-title">Ingresos por Categoría</div>
+              <div class="chart-subtitle">Ventas, encargos, patrocinios y otros ingresos</div>
+            </div>
+          </div>
+          <div class="chart-container" id="modecoIngresosChart"></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-header">
+            <div>
+              <div class="chart-title">Gastos por Clasificación</div>
+              <div class="chart-subtitle">COGS · OPEX · CAPEX · Modeco</div>
+            </div>
+          </div>
+          <div class="chart-container" id="modecoGastosClasificacionChart"></div>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-header">
+          <div>
+            <div class="chart-title">Ingresos vs Gastos por Mes</div>
+            <div class="chart-subtitle">Comparativo mensual de operación Modeco</div>
+          </div>
+        </div>
+        <div class="chart-container" id="modecoIngresosVsGastosChart"></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-header">
+          <div>
+            <div class="chart-title">Cascada: Ingresos → Utilidad Neta</div>
+            <div class="chart-subtitle">Impacto de COGS, OPEX y gastos Modeco sobre el resultado</div>
+          </div>
+        </div>
+        <div class="chart-container" id="modecoWaterfallChart"></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-header">
+          <div>
+            <div class="chart-title">Balance de Modeco</div>
+            <div class="chart-subtitle">Activos líquidos vs préstamo y evolución histórica</div>
+          </div>
+        </div>
+        <div class="two-col" style="margin-bottom:0;">
+          <div class="chart-container" id="modecoBalanceChart"></div>
+          <div class="chart-container" id="modecoBalanceEvolutionChart"></div>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-header">
+          <div>
+            <div class="chart-title">Gastos por Categoría</div>
+            <div class="chart-subtitle">Mes actual etiquetado por clasificación contable</div>
+          </div>
+        </div>
+        <div id="modecoCategoriasList"></div>
+      </div>
+    </section>
 
     <section id="budget" class="section">
       <h2 class="section-title">Editar Presupuesto</h2>

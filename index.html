@@ -259,6 +259,28 @@
         </div>
         <div id="incomeCategoriesList"></div>
       </div>
+      <!-- Ingresos por día — Supabase/Wallet -->
+      <div class="chart-card">
+        <div class="chart-header" style="flex-wrap:wrap;gap:12px;">
+          <div>
+            <div class="chart-title">💰 Ingresos por Día</div>
+            <div class="chart-subtitle">Detalle diario desde Supabase / Wallet</div>
+          </div>
+          <select id="dailyIngresosMonth" class="year-select" onchange="onDailyMonthChange('ingresos')"></select>
+        </div>
+        <div class="stats-grid" id="dailyIngresosStats"></div>
+        <div class="chart-container" id="dailyIngresosChart" style="height:280px;"></div>
+        <div id="dailyIngresosList" style="margin-top:16px;"></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header">
+          <div>
+            <div class="chart-title">🔥 Calendario de Calor — Ingresos</div>
+            <div class="chart-subtitle">Intensidad según el ingreso diario del mes</div>
+          </div>
+        </div>
+        <div id="dailyIngresosHeatmap" class="heatmap-container"></div>
+      </div>
     </section>
 
     <section id="expenses" class="section">
@@ -293,6 +315,28 @@
           </div>
         </div>
         <div id="expenseCategoriesList"></div>
+      </div>
+      <!-- Gastos por día — Supabase/Wallet -->
+      <div class="chart-card">
+        <div class="chart-header" style="flex-wrap:wrap;gap:12px;">
+          <div>
+            <div class="chart-title">💸 Gastos por Día</div>
+            <div class="chart-subtitle">Detalle diario desde Supabase / Wallet</div>
+          </div>
+          <select id="dailyGastosMonth" class="year-select" onchange="onDailyMonthChange('gastos')"></select>
+        </div>
+        <div class="stats-grid" id="dailyGastosStats"></div>
+        <div class="chart-container" id="dailyGastosChart" style="height:280px;"></div>
+        <div id="dailyGastosList" style="margin-top:16px;"></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header">
+          <div>
+            <div class="chart-title">🔥 Calendario de Calor — Gastos</div>
+            <div class="chart-subtitle">Intensidad según el gasto diario del mes</div>
+          </div>
+        </div>
+        <div id="dailyGastosHeatmap" class="heatmap-container"></div>
       </div>
     </section>
 

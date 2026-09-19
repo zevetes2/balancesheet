@@ -2671,14 +2671,15 @@ function renderRatiosRadarChart() {
             case 'overview': renderOverview(); break;
             case 'assets': renderAssets(); break;
             case 'liabilities': renderLiabilities(); break;
-            case 'income': renderIncome(); break;
-            case 'expenses': renderExpenses(); break;
+            case 'income': renderIncome(); renderDailySupabase('ingresos'); break;
+            case 'expenses': renderExpenses(); renderDailySupabase('gastos'); break;
             case 'analytics': renderAnalytics(); break;
             case 'ratios': break; // Los ratios se manejan en renderChartsForTab
             case 'db-gastos': renderDBGastosTab(); break;
             case 'jarras': renderJarrasTab(); break;
             case 'modeco': renderModecoTab(); break;
             case 'budget': setTimeout(initBudgetEditor, 100); break;
+
         }
     }
 
@@ -5495,4 +5496,393 @@ function renderModecoCategoriasList() {
       }).join('')}
     </div>
   `;
+}
+
+// ============================================================================
+// SUPABASE DIARIO — GASTOS E INGRESOS
+// ============================================================================
+
+function loadDailySupabase(tipo, year, month) {
+  return new Promise((resolve, reject) => {
+    const cb = 'dailyCb_' + Date.now();
+    const script = document.createElement('script');
+    const timeout = setTimeout(() => {
+      reject(new Error('Timeout cargando ' + tipo));
+      cleanup();
+    }, 30000);
+
+    function cleanup() {
+      if (script.parentNode) script.parentNode.removeChild(script);
+      delete window[cb];
+      clearTimeout(timeout);
+    }
+
+    window[cb] = (data) => {
+      if (data && data.error) {
+        reject(new Error(data.message || 'Error del servidor'));
+      } else {
+        resolve(data);
+      }
+      cleanup();
+    };
+
+    script.onerror = () => {
+      reject(new Error('Error de red JSONP'));
+      cleanup();
+    };
+
+    const action = tipo === 'gastos' ? 'getDailyGastos' : 'getDailyIngresos';
+    const url = CONFI.API_URL + '?action=' + action +
+                '&year=' + year + '&month=' + month +
+                '&callback=' + cb;
+
+    script.src = url;
+    document.head.appendChild(script);
+  });
+}
+
+let dailySupabaseChart = null;
+
+// Registrar charts por tipo para poder destruirlos individualmente
+let dailyCharts = { gastos: null, ingresos: null };
+
+// Paleta estable por índice (los top reciben colores distintos garantizados)
+const CATEGORY_PALETTE = [
+  '#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16',
+  '#22c55e', '#14b8a6', '#06b6d4', '#0ea5e9', '#3b82f6',
+  '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899',
+  '#f43f5e', '#64748b', '#78716c', '#a8a29e', '#94a3b8'
+];
+
+function formatCompactMoney(val) {
+  if (val >= 1000000) return 'RD$' + (val / 1000000).toFixed(1) + 'M';
+  if (val >= 1000)    return 'RD$' + (val / 1000).toFixed(0) + 'K';
+  return 'RD$' + Math.round(val);
+}
+
+async function renderDailySupabase(tipo) {
+  const isGasto   = tipo === 'gastos';
+  const chartId   = isGasto ? 'dailyGastosChart'    : 'dailyIngresosChart';
+  const statsId   = isGasto ? 'dailyGastosStats'    : 'dailyIngresosStats';
+  const listId    = isGasto ? 'dailyGastosList'     : 'dailyIngresosList';
+  const heatmapId = isGasto ? 'dailyGastosHeatmap'  : 'dailyIngresosHeatmap';
+  const selectId  = isGasto ? 'dailyGastosMonth'    : 'dailyIngresosMonth';
+
+  const statsEl = document.getElementById(statsId);
+  const listEl  = document.getElementById(listId);
+  if (!statsEl) return;
+
+  statsEl.innerHTML = '<div class="stat-card" style="grid-column:1/-1">' +
+    '<div class="stat-value" style="font-size:14px;color:#64748b">⏳ Cargando...</div></div>';
+
+  // Poblar selector de mes la primera vez
+  const select = document.getElementById(selectId);
+  if (select && select.options.length === 0) {
+    const now = new Date();
+    for (let i = 0; i < 24; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const val = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+      const lbl = d.toLocaleDateString('es-DO', { month: 'long', year: 'numeric' });
+      const opt = document.createElement('option');
+      opt.value = val;
+      opt.textContent = lbl.charAt(0).toUpperCase() + lbl.slice(1);
+      select.appendChild(opt);
+    }
+  }
+
+  const selValue = select?.value ||
+    (new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0'));
+  const [yearStr, monthStr] = selValue.split('-');
+
+  try {
+    const data = await loadDailySupabase(tipo, yearStr, monthStr);
+
+    if (!data.dias || data.dias.length === 0) {
+      statsEl.innerHTML = '<div class="stat-card" style="grid-column:1/-1">' +
+        '<div class="stat-value" style="font-size:14px;color:#64748b">Sin transacciones este mes</div></div>';
+      if (listEl) listEl.innerHTML = '';
+      if (dailyCharts[tipo]) { dailyCharts[tipo].destroy(); dailyCharts[tipo] = null; }
+      renderHeatmap(heatmapId, data, tipo);
+      return;
+    }
+
+    const color = isGasto ? '#ef4444' : '#22c55e';
+
+    // Categorías ordenadas por ranking (usado por chart Y lista)
+    const MAX_STACK = 8;
+    const allCats = data.categoriasStacked || [];
+    const topCats = allCats.slice(0, MAX_STACK);
+    const otrosCats = allCats.slice(MAX_STACK);
+
+    // ---------- STATS ----------
+    const diaMax = data.dias.reduce((a, b) => a.total > b.total ? a : b);
+    statsEl.innerHTML = `
+      <div class="stat-card" style="border-top:3px solid ${color}">
+        <div class="stat-header"><span class="stat-label">Total del Mes</span></div>
+        <div class="stat-value" style="color:${color}">${fmtMoney(data.totalMes)}</div>
+        <div class="stat-sub">${data.totalTransacciones} transacciones</div>
+      </div>
+      <div class="stat-card" style="border-top:3px solid #3b82f6">
+        <div class="stat-header"><span class="stat-label">Promedio Diario</span></div>
+        <div class="stat-value">${fmtMoney(data.promedioDiario)}</div>
+        <div class="stat-sub">${data.diasConDatos} días con actividad</div>
+      </div>
+      <div class="stat-card" style="border-top:3px solid #f59e0b">
+        <div class="stat-header"><span class="stat-label">Día Más Alto</span></div>
+        <div class="stat-value">${fmtMoney(diaMax.total)}</div>
+        <div class="stat-sub">${diaMax.fecha}</div>
+      </div>
+      <div class="stat-card" style="border-top:3px solid #8b5cf6">
+        <div class="stat-header"><span class="stat-label">Top Categoría</span></div>
+        <div class="stat-value" style="font-size:16px">${data.topCategorias[0]?.name || '—'}</div>
+        <div class="stat-sub">${fmtMoney(data.topCategorias[0]?.total || 0)}</div>
+      </div>
+    `;
+
+    // ---------- STACKED BAR CHART ----------
+    const ctx = getCanvas(chartId);
+    if (ctx) {
+      if (dailyCharts[tipo]) dailyCharts[tipo].destroy();
+
+      const labels = data.dias.map(d => d.fecha.substring(8, 10)); // solo día "01".."31"
+
+      const datasets = topCats.map((c, i) => ({
+        label: c.name,
+        data: c.dias.map(d => d.monto),
+        backgroundColor: CATEGORY_PALETTE[i % CATEGORY_PALETTE.length],
+        borderColor: '#0f172a',
+        borderWidth: 1,
+        borderRadius: 3,
+        stack: 'stack1'
+      }));
+
+      // Agrupar resto como "Otros"
+      if (otrosCats.length > 0) {
+        const otrosData = data.dias.map(d => {
+          let sum = 0;
+          otrosCats.forEach(c => { sum += (d.categorias && d.categorias[c.name]) || 0; });
+          return sum;
+        });
+        const otrosTotal = otrosData.reduce((a, b) => a + b, 0);
+        if (otrosTotal > 0) {
+          datasets.push({
+            label: 'Otros',
+            data: otrosData,
+            backgroundColor: '#475569',
+            borderColor: '#0f172a',
+            borderWidth: 1,
+            borderRadius: 3,
+            stack: 'stack1'
+          });
+        }
+      }
+
+      dailyCharts[tipo] = new Chart(ctx, {
+        type: 'bar',
+        data: { labels, datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: {
+                color: '#94a3b8',
+                font: { size: 10 },
+                usePointStyle: true,
+                boxWidth: 8,
+                padding: 10
+              }
+            },
+            tooltip: {
+              backgroundColor: 'rgba(15,23,42,0.95)',
+              titleColor: '#e2e8f0',
+              bodyColor: '#e2e8f0',
+              borderColor: 'rgba(51,65,85,0.5)',
+              borderWidth: 1,
+              callbacks: {
+                title: (items) => 'Día ' + items[0].label,
+                label: (item) => {
+                  if (!item.parsed.y) return null;
+                  return ` ${item.dataset.label}: ${fmtMoney(item.parsed.y)}`;
+                },
+                footer: (items) => {
+                  const total = items.reduce((s, i) => s + (i.parsed.y || 0), 0);
+                  return 'Total: ' + fmtMoney(total);
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              stacked: true,
+              grid: { display: false },
+              ticks: { color: '#64748b', font: { size: 10 } }
+            },
+            y: {
+              stacked: true,
+              grid: { color: 'rgba(51,65,85,0.2)' },
+              ticks: {
+                color: '#64748b',
+                font: { size: 10 },
+                callback: (v) => 'RD$' + (v / 1000).toFixed(0) + 'K'
+              }
+            }
+          }
+        }
+      });
+    }
+
+    // ---------- LISTA DIARIA ----------
+    if (listEl) {
+      listEl.innerHTML = '<div class="asset-list">' + data.dias
+        .slice()
+        .sort((a, b) => b.total - a.total)
+        .map(d => {
+          const fecha = new Date(d.fecha + 'T12:00:00');
+          const label = fecha.toLocaleDateString('es-DO', {
+            weekday: 'short', day: 'numeric', month: 'short'
+          });
+          // mini badge con las top 2 categorías del día
+          const topDia = Object.entries(d.categorias)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 2);
+          const badges = topDia.map(([name, amt]) => {
+            const catIdx = allCats.findIndex(c => c.name === name);
+            const bg = catIdx >= 0
+              ? CATEGORY_PALETTE[catIdx % CATEGORY_PALETTE.length]
+              : '#475569';
+            return `<span style="display:inline-block;padding:1px 6px;background:${bg}30;border-radius:4px;font-size:9px;color:${bg};margin-right:4px;font-weight:700;">${name}</span>`;
+          }).join('');
+
+          return `
+            <div class="asset-item">
+              <div class="asset-icon-wrap" style="background:${color}20;color:${color}">${d.fecha.substring(8,10)}</div>
+              <div class="asset-info">
+                <div class="asset-name">${label}</div>
+                <div class="asset-meta">${badges}<span style="color:#64748b">+${Math.max(0, Object.keys(d.categorias).length - 2)} más · ${d.count} tx</span></div>
+              </div>
+              <div class="asset-value">
+                <div class="asset-amount" style="color:${color}">${fmtMoney(d.total)}</div>
+              </div>
+            </div>`;
+        }).join('') + '</div>';
+    }
+
+    // ---------- HEATMAP ----------
+    renderHeatmap(heatmapId, data, tipo);
+
+  } catch (e) {
+    console.error('Error cargando ' + tipo + ' de Supabase:', e);
+    statsEl.innerHTML = '<div class="stat-card" style="grid-column:1/-1">' +
+      '<div class="stat-value" style="font-size:14px;color:#f87171">❌ ' + e.message + '</div></div>';
+  }
+}
+
+
+// ============================================================
+// HEATMAP CALENDAR
+// ============================================================
+function renderHeatmap(containerId, data, tipo) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  if (!data.dias || data.dias.length === 0) {
+    container.innerHTML = '<div style="text-align:center;color:#64748b;padding:24px;">Sin datos para este mes</div>';
+    return;
+  }
+
+  const year  = parseInt(data.year, 10);
+  const month = parseInt(data.month, 10) - 1; // 0-indexed
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  const firstWeekday = new Date(year, month, 1).getDay(); // 0=Dom..6=Sáb
+
+  // Convertir a semana que empieza en lunes
+  const startOffset = firstWeekday === 0 ? 6 : firstWeekday - 1;
+
+  const weekdays = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+
+  // Mapa fecha → entry
+  const diasMap = {};
+  data.dias.forEach(d => { diasMap[d.fecha] = d; });
+
+  // Color según intensidad
+  const maxVal = data.maxDia || 1;
+  const colorLow  = tipo === 'gastos' ? [120, 30, 30]  : [20, 80, 40];
+  const colorHigh = tipo === 'gastos' ? [239, 68, 68]  : [34, 197, 94];
+
+  function intensityColor(val) {
+    if (!val || val <= 0) return null;
+    // Escala raíz cuadrada: valores pequeños siguen siendo visibles
+    let t = Math.sqrt(val / maxVal);
+    t = Math.max(0.2, Math.min(1, t));
+    const r = Math.round(colorLow[0] + (colorHigh[0] - colorLow[0]) * t);
+    const g = Math.round(colorLow[1] + (colorHigh[1] - colorLow[1]) * t);
+    const b = Math.round(colorLow[2] + (colorHigh[2] - colorLow[2]) * t);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  let html = '';
+
+  // Encabezados de días
+  html += '<div class="heatmap-weekdays">';
+  weekdays.forEach(w => { html += `<div class="heatmap-weekday">${w}</div>`; });
+  html += '</div>';
+
+  // Grid
+  html += '<div class="heatmap-grid">';
+
+  // Celdas vacías antes del día 1
+  for (let i = 0; i < startOffset; i++) {
+    html += '<div class="heatmap-cell empty"></div>';
+  }
+
+  // Días del mes
+  for (let d = 1; d <= lastDay; d++) {
+    const fechaISO = `${data.year}-${data.month}-${String(d).padStart(2, '0')}`;
+    const entry = diasMap[fechaISO];
+
+    if (entry && entry.total > 0) {
+      const bg = intensityColor(entry.total);
+      html += `
+        <div class="heatmap-cell has-data"
+             style="background:${bg};"
+             title="${fechaISO} · ${fmtMoney(entry.total)} · ${entry.count} transacciones">
+          <div class="heatmap-day-number">${d}</div>
+          <div class="heatmap-day-amount">${formatCompactMoney(entry.total)}</div>
+        </div>`;
+    } else {
+      html += `
+        <div class="heatmap-cell no-data" title="${fechaISO} · Sin movimientos">
+          <div class="heatmap-day-number">${d}</div>
+        </div>`;
+    }
+  }
+
+  html += '</div>';
+
+  // Leyenda
+  const steps = 5;
+  let swatches = '';
+  for (let i = 0; i < steps; i++) {
+    const t = i / (steps - 1);
+    const sample = maxVal * t;
+    const bg = intensityColor(sample) || 'rgba(30,41,59,0.3)';
+    swatches += `<div class="heatmap-legend-swatch" style="background:${bg};"></div>`;
+  }
+
+  html += `
+    <div class="heatmap-legend">
+      <span>Menos</span>
+      <div class="heatmap-legend-scale">${swatches}</div>
+      <span>Más</span>
+    </div>
+  `;
+
+  container.innerHTML = html;
+}
+
+function onDailyMonthChange(tipo) {
+  renderDailySupabase(tipo);
 }

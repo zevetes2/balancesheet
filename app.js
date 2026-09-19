@@ -594,9 +594,9 @@ function loadDataJSONP() {
         const callbackName = 'bsCallback_' + Date.now();
         const script = document.createElement('script');
         const timeout = setTimeout(() => {
-            reject(new Error('Timeout JSONP después de 30s'));
+            reject(new Error('Timeout JSONP después de 2m'));
             cleanup();
-        }, 60000);
+        }, 120000);
 
         function cleanup() {
             if (script.parentNode) script.parentNode.removeChild(script);

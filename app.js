@@ -78,7 +78,7 @@
         'Débito Banreservas': '#0D47A1', 'Cash': '#0D47A1', 'Débito Popular': '#0D47A1',
         'Digital Banreservas': '#4DB6AC', 'Digital Popular': '#4DB6AC', 'Digital BHD': '#4DB6AC',
         'BDI: Ahorro': '#FBC02D', 'QIK: Ahorro': '#FBC02D', 'Ademi: Ahorro': '#4EA90A',
-        'Cash US': '#4EA90A', 'Airtm': '#4EA90A', 'Paypal USD': '#4EA90A',
+        'Cash US': '#4EA90A', 'Airtm': '#4EA90A', 'Paypal USD': '#4EA90A', 'Binance': '#4EA90A',
         'Etoro': '#FF6F00', 'Hapi': '#FF6F00', 'Alpha View': '#FF6F00',
         'UC United Capital': '#FF6F00', 'Larimar': '#FF6F00', 'Cesar Iglesias': '#FF6F00',
         'SIVEMBC263': '#FF6F00', 'Certificado Banreserva': '#FF6F00',
@@ -149,6 +149,7 @@ function getCreditLimit(name) {
         'Crédito BHD Premia DOP': 41000,
         'Extra Limite Caribe': 40500,
         'Credimás Banreservas': 50000,
+        'Crediclick BHD': 130000,
         'Prestamo Popular': 164000,
         'Prestamo Modeco': 230000,
     };
@@ -165,7 +166,7 @@ const TARJETAS_NOMBRES = [
     'Crédito Banreservas Gold USD','Crédito BHD Premia DOP','Crédito BHD Premia USD'
 ];
 
-const LINEAS_NOMBRES = ['Extra Limite Caribe', 'Credimás Banreservas'];
+const LINEAS_NOMBRES = ['Extra Limite Caribe', 'Credimás Banreservas', 'Crediclick BHD'];
 const PRESTAMOS_NOMBRES = ['Prestamo Popular', 'Prestamo Modeco'];
 
 function getDeuda(data) {

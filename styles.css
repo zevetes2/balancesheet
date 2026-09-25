@@ -2325,3 +2325,18 @@
     font-size: 8px;
   }
 }
+/* ===== PROYECCIÓN POR CATEGORÍA ===== */
+.expense-projection {
+    animation: fadeIn 0.3s ease;
+}
+.expense-projection .chart-container {
+    position: relative;
+}
+@media (max-width: 640px) {
+    .expense-projection {
+        padding: 10px 12px !important;
+    }
+    .expense-projection .chart-container {
+        height: 200px !important;
+    }
+}

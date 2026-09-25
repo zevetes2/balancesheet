@@ -15,6 +15,151 @@
     let appData = null;
     let charts = {};
 
+    // ============================================================
+    // CACHE DE DATOS DIARIOS (para proyecciones por categoría)
+    // ============================================================
+    const dailyCache = {}; // { 'gastos_2026_09': data, ... }
+
+    function addMonths(year, month, delta) {
+        const d = new Date(year, month - 1 + delta, 1);
+        return { year: d.getFullYear(), month: d.getMonth() + 1 };
+    }
+
+    function getDaysInMonth(year, month) {
+        return new Date(year, month, 0).getDate();
+    }
+
+    // Devuelve la categoría + todos sus descendientes (recursivo)
+    function getAllCategoryVariants(parentName) {
+        const names = new Set([parentName]);
+        let changed = true;
+        let iterations = 0;
+
+        while (changed && iterations < 10) {
+            changed = false;
+            iterations++;
+            for (const [name, meta] of Object.entries(CAT_DB)) {
+                if (meta.padre && names.has(meta.padre) && !names.has(name)) {
+                    names.add(name);
+                    changed = true;
+                }
+            }
+        }
+        return names;
+    }
+
+    function extractDailyForCategory(monthData, catName, daysInMonth) {
+        const arr = new Array(daysInMonth).fill(0);
+        if (!monthData || !monthData.dias) return arr;
+
+        // Set con la categoría padre + todas las subcategorías que le pertenecen
+        const variants = getAllCategoryVariants(catName);
+
+        monthData.dias.forEach(d => {
+            const day = parseInt(d.fecha.substring(8, 10), 10);
+            if (day < 1 || day > daysInMonth) return;
+            if (!d.categorias) return;
+
+            // Sumar todo lo que coincida con cualquiera de las variantes
+            let total = 0;
+            for (const [key, val] of Object.entries(d.categorias)) {
+                if (variants.has(key)) total += (val || 0);
+            }
+            arr[day - 1] = total;
+        });
+
+        return arr;
+    }
+
+    function accumulate(arr) {
+        const out = [];
+        let sum = 0;
+        for (const v of arr) { sum += v; out.push(sum); }
+        return out;
+    }
+
+    // Construye todas las series necesarias para la proyección de una categoría
+    function buildCategoryProjection(catName, currentBudget) {
+        const now = new Date();
+        const y = now.getFullYear();
+        const m = now.getMonth() + 1;
+        const today = Math.min(now.getDate(), getDaysInMonth(y, m));
+        const daysInMonth = getDaysInMonth(y, m);
+
+        const prev1 = addMonths(y, m, -1);
+        const prev2 = addMonths(y, m, -2);
+
+        const curKey  = `gastos_${y}_${String(m).padStart(2, '0')}`;
+        const p1Key   = `gastos_${prev1.year}_${String(prev1.month).padStart(2, '0')}`;
+        const p2Key   = `gastos_${prev2.year}_${String(prev2.month).padStart(2, '0')}`;
+
+        const curData  = dailyCache[curKey];
+        const p1Data   = dailyCache[p1Key];
+        const p2Data   = dailyCache[p2Key];
+
+        if (!curData) return null;
+
+        const dailyCur   = extractDailyForCategory(curData, catName, daysInMonth);
+        const dailyPrev1 = extractDailyForCategory(p1Data, catName, daysInMonth);
+        const dailyPrev2 = extractDailyForCategory(p2Data, catName, daysInMonth);
+
+        const accCur   = accumulate(dailyCur);
+        const accPrev1 = accumulate(dailyPrev1);
+        const accPrev2 = accumulate(dailyPrev2);
+
+        const todayTotal = accCur[today - 1] || 0;
+
+        // Ritmo diario actual (promedio real hasta hoy)
+        const avgDailyReal = today > 0 ? todayTotal / today : 0;
+
+        // Ritmo diario de 3 meses
+        const totalPrev1 = accPrev1[accPrev1.length - 1] || 0;
+        const totalPrev2 = accPrev2[accPrev2.length - 1] || 0;
+        const daysPrev1 = p1Data?.dias?.length ? getDaysInMonth(prev1.year, prev1.month) : 0;
+        const daysPrev2 = p2Data?.dias?.length ? getDaysInMonth(prev2.year, prev2.month) : 0;
+
+        const sum3m = todayTotal + totalPrev1 + totalPrev2;
+        const days3m = today + daysPrev1 + daysPrev2;
+        const avgDaily3m = days3m > 0 ? sum3m / days3m : 0;
+
+        // Tasa usada para proyectar: preferir el ritmo real, si es 0 usar el de 3m
+        const projectionRate = todayTotal > 0 ? avgDailyReal : avgDaily3m;
+
+        // Proyección acumulada: hasta hoy real, después extrapolado
+        const projected = [];
+        for (let i = 0; i < daysInMonth; i++) {
+            if (i < today) projected.push(accCur[i]);
+            else projected.push(todayTotal + projectionRate * (i - today + 1));
+        }
+
+        // Promedio acumulado 3m por día (línea azul del ejemplo)
+        const avg3mCumulative = [];
+        for (let i = 0; i < daysInMonth; i++) {
+            let sum = 0, count = 0;
+            if (i < today) { sum += accCur[i]; count++; }
+            if (p1Data?.dias?.length) { sum += accPrev1[i]; count++; }
+            if (p2Data?.dias?.length) { sum += accPrev2[i]; count++; }
+            avg3mCumulative.push(count > 0 ? sum / count : 0);
+        }
+
+        return {
+            daysInMonth,
+            today,
+            labels: Array.from({ length: daysInMonth }, (_, i) => String(i + 1)),
+            accumulated: accCur.map((v, i) => i < today ? v : null),
+            projected: projected.map((v, i) => i >= today - 1 ? v : null),
+            prev1: p1Data?.dias?.length ? accPrev1 : null,
+            prev2: p2Data?.dias?.length ? accPrev2 : null,
+            avg3mCumulative,
+            budget: currentBudget || 0,
+            todayTotal,
+            avgDaily3m,
+            projectionRate,
+            hasPrev1: !!p1Data?.dias?.length,
+            hasPrev2: !!p2Data?.dias?.length
+        };
+    }
+
     // === MODECO: CLASIFICACIÓN Y COLORES ===
     const MODECO_GASTO_CLASIFICACION = {
         'Compras y Materia Prima - COGS': 'COGS',
@@ -1391,61 +1536,75 @@ function loadDataJSONP() {
     
     // Lista de categorías
     const expenseList = gastosMostrar
-        .sort((a, b) => b.gastoReal - a.gastoReal)
-        .map(p => {
-            const categoria = categorias.find(c => c.id == p.idCategoria);
-            const nombre = categoria ? categoria.etiqueta : 'Categoría ' + p.idCategoria;
-            const pct = p.montoPresupuestado > 0 ? (p.gastoReal / p.montoPresupuestado) * 100 : 0;
-            const color = pct > 100 ? '#ef4444' : pct > 80 ? '#f59e0b' : '#22c55e';
-            const icon = pct > 100 ? '⚠️' : pct > 80 ? '⚡' : '✅';
-            
-            // Barras de proporción
-            const anthonyPct = p.montoPresupuestado > 0 ? (p.gastoAnthony / p.montoPresupuestado) * 100 : 0;
-            const emelyPct = p.montoPresupuestado > 0 ? (p.gastoEmely / p.montoPresupuestado) * 100 : 0;
-            const remainingPct = Math.max(0, 100 - anthonyPct - emelyPct);
-            
-            return `
-                <div class="expense-card" style="border-left: 3px solid ${color}">
-                    <div class="expense-icon" style="background:${color}20;color:${color}">${icon}</div>
-                    <div class="expense-main">
-                        <div class="expense-header">
-                            <div class="expense-name">${nombre}</div>
-                            <div class="expense-pct" style="color:${color}">${pct.toFixed(1)}%</div>
-                        </div>
-                        <div class="expense-meta">
-                            ${fmtMoney(p.gastoReal)} / ${fmtMoney(p.montoPresupuestado)} · ${p.diasRestantes} días restantes · ${fmtMoney(p.recomendacionDiaria)}/día
-                        </div>
-                        <div class="expense-bar-track">
-                            <div class="expense-bar-anthony" style="width:${anthonyPct}%"></div>
-                            <div class="expense-bar-emely" style="width:${emelyPct}%"></div>
-                            <div class="expense-bar-remaining" style="width:${remainingPct}%"></div>
-                        </div>
+    .sort((a, b) => b.gastoReal - a.gastoReal)
+    .map((p, idx) => {   // ← NUEVO: recibimos idx
+        const categoria = categorias.find(c => c.id == p.idCategoria);
+        const nombre = categoria ? categoria.etiqueta : 'Categoría ' + p.idCategoria;
+        const pct = p.montoPresupuestado > 0 ? (p.gastoReal / p.montoPresupuestado) * 100 : 0;
+        const color = pct > 100 ? '#ef4444' : pct > 80 ? '#f59e0b' : '#22c55e';
+        const icon = pct > 100 ? '⚠️' : pct > 80 ? '⚡' : '✅';
+
+        const anthonyPct = p.montoPresupuestado > 0 ? (p.gastoAnthony / p.montoPresupuestado) * 100 : 0;
+        const emelyPct = p.montoPresupuestado > 0 ? (p.gastoEmely / p.montoPresupuestado) * 100 : 0;
+        const remainingPct = Math.max(0, 100 - anthonyPct - emelyPct);
+
+        const chartId = `expenseProjChart_${idx}`;   // ← NUEVO
+
+        return `
+            <div class="expense-card" style="border-left: 3px solid ${color}">
+                <div class="expense-icon" style="background:${color}20;color:${color}">${icon}</div>
+                <div class="expense-main">
+                    <div class="expense-header">
+                        <div class="expense-name">${nombre}</div>
+                        <div class="expense-pct" style="color:${color}">${pct.toFixed(1)}%</div>
+                    </div>
+                    <div class="expense-meta">
+                        ${fmtMoney(p.gastoReal)} / ${fmtMoney(p.montoPresupuestado)} · ${p.diasRestantes} días restantes · ${fmtMoney(p.recomendacionDiaria)}/día
+                    </div>
+                    <div class="expense-bar-track">
+                        <div class="expense-bar-anthony" style="width:${anthonyPct}%"></div>
+                        <div class="expense-bar-emely" style="width:${emelyPct}%"></div>
+                        <div class="expense-bar-remaining" style="width:${remainingPct}%"></div>
                     </div>
                 </div>
-                ${p.particion ? `
-                <div class="expense-partition">
-                    <div class="expense-partition-col">
-                        <div class="expense-partition-label" style="color:#3b82f6">Anthony</div>
-                        <div class="expense-partition-value">${fmtMoney(p.gastoAnthony)}</div>
-                        <div class="expense-partition-sub" style="color:${p.restanteAnthony >= 0 ? '#3b82f6' : '#f87171'}">${fmtMoney(p.restanteAnthony)} rest.</div>
-                    </div>
-                    <div class="expense-partition-col center">
-                        <div class="expense-partition-label" style="color:#22c55e">Restante</div>
-                        <div class="expense-partition-value">${fmtMoney(p.diferencia)}</div>
-                        <div class="expense-partition-sub" style="color:${p.diferencia >= 0 ? '#22c55e' : '#f87171'}">${p.diferencia >= 0 ? 'Disponible' : 'Excedido'}</div>
-                    </div>
-                    <div class="expense-partition-col">
-                        <div class="expense-partition-label" style="color:#ec4899">Emely</div>
-                        <div class="expense-partition-value">${fmtMoney(p.gastoEmely)}</div>
-                        <div class="expense-partition-sub" style="color:${p.restanteEmely >= 0 ? '#ec4899' : '#f87171'}">${fmtMoney(p.restanteEmely)} rest.</div>
-                    </div>
+            </div>
+            ${p.particion ? `
+            <div class="expense-partition">
+                <div class="expense-partition-col">
+                    <div class="expense-partition-label" style="color:#3b82f6">Anthony</div>
+                    <div class="expense-partition-value">${fmtMoney(p.gastoAnthony)}</div>
+                    <div class="expense-partition-sub" style="color:${p.restanteAnthony >= 0 ? '#3b82f6' : '#f87171'}">${fmtMoney(p.restanteAnthony)} rest.</div>
                 </div>
-                ` : ''}
-            `;
-        }).join('');
+                <div class="expense-partition-col center">
+                    <div class="expense-partition-label" style="color:#22c55e">Restante</div>
+                    <div class="expense-partition-value">${fmtMoney(p.diferencia)}</div>
+                    <div class="expense-partition-sub" style="color:${p.diferencia >= 0 ? '#22c55e' : '#f87171'}">${p.diferencia >= 0 ? 'Disponible' : 'Excedido'}</div>
+                </div>
+                <div class="expense-partition-col">
+                    <div class="expense-partition-label" style="color:#ec4899">Emely</div>
+                    <div class="expense-partition-value">${fmtMoney(p.gastoEmely)}</div>
+                    <div class="expense-partition-sub" style="color:${p.restanteEmely >= 0 ? '#ec4899' : '#f87171'}">${fmtMoney(p.restanteEmely)} rest.</div>
+                </div>
+            </div>
+            ` : ''}
+            <!-- ← NUEVO: contenedor de proyección -->
+            <div class="expense-projection" data-proj-chart-id="${chartId}"
+                 style="display:none;padding:14px 16px;background:rgba(15,23,42,0.55);
+                        border:1px solid rgba(51,65,85,0.2);border-top:none;
+                        border-radius:0 0 12px 12px;margin-top:-10px;margin-bottom:10px;">
+                <div style="font-size:11px;font-weight:700;color:#64748b;
+                            text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px;">
+                    📈 Proyección del mes · ${nombre}
+                </div>
+                <div class="chart-container" id="${chartId}" style="height:240px;"></div>
+            </div>
+        `;
+    }).join('');
     
     document.getElementById('expenseCategoriesList').innerHTML = 
         `<div class="asset-list">${expenseList}</div>`;
+    // ← NUEVO: dispara la carga async de proyecciones
+    setTimeout(() => loadExpenseProjections(gastosMostrar), 50);
 }
 
 
@@ -5585,47 +5744,268 @@ function renderModecoCategoriasList() {
   `;
 }
 
+// ============================================================
+// PROYECCIÓN POR CATEGORÍA — GRÁFICA
+// ============================================================
+function renderCategoryProjectionChart(containerId, projection, catName) {
+    // ← getCanvas resuelve el <canvas> dentro del contenedor y destruye el anterior
+    const ctx = getCanvas(containerId);
+    if (!ctx) return;
+
+    const labels = projection.labels;
+    const today = projection.today;
+
+    const datasets = [];
+
+    // Presupuesto (línea horizontal roja punteada)
+    if (projection.budget > 0) {
+        datasets.push({
+            label: 'Presupuesto',
+            data: labels.map(() => projection.budget),
+            borderColor: '#ef4444',
+            borderDash: [6, 6],
+            borderWidth: 2,
+            pointRadius: 0,
+            fill: false,
+            tension: 0
+        });
+    }
+
+    if (projection.prev2) {
+        datasets.push({
+            label: '-2 Gastos Acumulados',
+            data: projection.prev2,
+            borderColor: 'rgba(148,163,184,0.55)',
+            borderWidth: 1.5,
+            pointRadius: 0,
+            fill: false,
+            tension: 0.2
+        });
+    }
+
+    if (projection.prev1) {
+        datasets.push({
+            label: '-1 Gastos Acumulados',
+            data: projection.prev1,
+            borderColor: '#f59e0b',
+            borderWidth: 1.5,
+            pointRadius: 0,
+            fill: false,
+            tension: 0.2
+        });
+    }
+
+    datasets.push({
+        label: 'Gastos Prom 3m',
+        data: projection.avg3mCumulative,
+        borderColor: '#3b82f6',
+        borderWidth: 2,
+        pointRadius: 0,
+        fill: false,
+        tension: 0.2
+    });
+
+    datasets.push({
+        label: 'Gastos Acumulados',
+        data: projection.accumulated,
+        borderColor: '#f8fafc',
+        borderWidth: 2.5,
+        pointRadius: 0,
+        fill: false,
+        tension: 0.2
+    });
+
+    datasets.push({
+        label: 'Gastos Acumulado Proyectado',
+        data: projection.projected,
+        borderColor: '#f8fafc',
+        borderDash: [5, 5],
+        borderWidth: 2,
+        pointRadius: 0,
+        fill: false,
+        tension: 0.2
+    });
+
+    datasets.push({
+        label: 'HOY',
+        data: labels.map((_, i) => i === today - 1 ? projection.todayTotal : null),
+        borderColor: '#fbbf24',
+        backgroundColor: '#fbbf24',
+        pointRadius: 8,
+        pointStyle: 'crossRot',
+        borderWidth: 3,
+        showLine: false
+    });
+
+    new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { intersect: false, mode: 'index' },
+            plugins: {
+                legend: {
+                    position: 'top',
+                    labels: {
+                        color: '#94a3b8',
+                        font: { size: 10 },
+                        usePointStyle: true,
+                        boxWidth: 8,
+                        padding: 10
+                    }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(15,23,42,0.95)',
+                    titleColor: '#e2e8f0',
+                    bodyColor: '#e2e8f0',
+                    borderColor: 'rgba(51,65,85,0.5)',
+                    borderWidth: 1,
+                    callbacks: {
+                        title: (items) => `Día ${items[0].label}`,
+                        label: (ctx) => {
+                            if (ctx.parsed.y === null || ctx.parsed.y === undefined) return null;
+                            return ` ${ctx.dataset.label}: ${fmtMoney(ctx.parsed.y)}`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { display: false },
+                    ticks: {
+                        color: '#64748b',
+                        font: { size: 9 },
+                        maxTicksLimit: 15,
+                        maxRotation: 0
+                    }
+                },
+                y: {
+                    grid: { color: 'rgba(51,65,85,0.2)' },
+                    ticks: {
+                        color: '#64748b',
+                        font: { size: 9 },
+                        callback: (v) => {
+                            if (v >= 1000000) return 'RD$' + (v/1000000).toFixed(1) + 'M';
+                            return 'RD$' + (v/1000).toFixed(0) + 'K';
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Carga 3 meses y renderiza los charts de cada categoría
+async function loadExpenseProjections(gastosMostrar) {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth() + 1;
+    const prev1 = addMonths(y, m, -1);
+    const prev2 = addMonths(y, m, -2);
+
+    // ← Promise.allSettled: si un mes falla, los otros siguen
+    const results = await Promise.allSettled([
+        loadDailySupabase('gastos', y, m),
+        loadDailySupabase('gastos', prev1.year, prev1.month),
+        loadDailySupabase('gastos', prev2.year, prev2.month)
+    ]);
+
+    const fails = results.filter(r => r.status === 'rejected');
+    if (fails.length > 0) {
+        console.warn(`⚠️ ${fails.length}/3 meses fallaron:`,
+            fails.map(f => f.reason?.message || String(f.reason)));
+    }
+
+    // Sin el mes actual no podemos proyectar — salir limpio
+    if (results[0].status === 'rejected') {
+        console.warn('Sin datos del mes actual — omitiendo proyecciones');
+        return;
+    }
+
+    const categorias = appData.categorias || [];
+
+    gastosMostrar.forEach((p, idx) => {
+        const cat = categorias.find(c => c.id == p.idCategoria);
+        const nombre = cat ? cat.etiqueta : 'Categoría ' + p.idCategoria;
+
+        const projection = buildCategoryProjection(nombre, p.montoPresupuestado);
+        if (!projection) return;
+
+        const chartId = `expenseProjChart_${idx}`;
+        const wrapper = document.querySelector(`[data-proj-chart-id="${chartId}"]`);
+        if (wrapper) {
+            wrapper.style.display = 'block';
+            renderCategoryProjectionChart(chartId, projection, nombre);
+        }
+    });
+}
+
 // ============================================================================
 // SUPABASE DIARIO — GASTOS E INGRESOS
 // ============================================================================
 
+// Anti-colisión y dedup de requests JSONP en vuelo
+const dailyInFlight = {};
+
 function loadDailySupabase(tipo, year, month) {
-  return new Promise((resolve, reject) => {
-    const cb = 'dailyCb_' + Date.now();
-    const script = document.createElement('script');
-    const timeout = setTimeout(() => {
-      reject(new Error('Timeout cargando ' + tipo));
-      cleanup();
-    }, 30000);
+    const key = `${tipo}_${year}_${String(month).padStart(2, '0')}`;
 
-    function cleanup() {
-      if (script.parentNode) script.parentNode.removeChild(script);
-      delete window[cb];
-      clearTimeout(timeout);
-    }
+    // 1. Cache hit
+    if (dailyCache[key]) return Promise.resolve(dailyCache[key]);
 
-    window[cb] = (data) => {
-      if (data && data.error) {
-        reject(new Error(data.message || 'Error del servidor'));
-      } else {
-        resolve(data);
-      }
-      cleanup();
-    };
+    // 2. Ya hay un request en vuelo para este mes → reusar
+    if (dailyInFlight[key]) return dailyInFlight[key];
 
-    script.onerror = () => {
-      reject(new Error('Error de red JSONP'));
-      cleanup();
-    };
+    // 3. Nuevo request
+    dailyInFlight[key] = new Promise((resolve, reject) => {
+        // Callback con sufijo aleatorio para evitar colisiones
+        const cb = 'dailyCb_' + Date.now() + '_' +
+                   Math.random().toString(36).slice(2, 8);
 
-    const action = tipo === 'gastos' ? 'getDailyGastos' : 'getDailyIngresos';
-    const url = CONFI.API_URL + '?action=' + action +
-                '&year=' + year + '&month=' + month +
-                '&callback=' + cb;
+        const script = document.createElement('script');
+        const timeout = setTimeout(() => {
+            delete dailyInFlight[key];
+            cleanup();
+            reject(new Error(`Timeout cargando ${tipo} ${year}-${month}`));
+        }, 45000);
 
-    script.src = url;
-    document.head.appendChild(script);
-  });
+        function cleanup() {
+            if (script.parentNode) script.parentNode.removeChild(script);
+            delete window[cb];
+            clearTimeout(timeout);
+        }
+
+        window[cb] = (data) => {
+            if (data && data.error) {
+                delete dailyInFlight[key];
+                cleanup();
+                reject(new Error(data.message || 'Error del servidor'));
+            } else {
+                dailyCache[key] = data;
+                delete dailyInFlight[key];
+                cleanup();
+                resolve(data);
+            }
+        };
+
+        script.onerror = () => {
+            delete dailyInFlight[key];
+            cleanup();
+            reject(new Error('Error de red JSONP'));
+        };
+
+        const action = tipo === 'gastos' ? 'getDailyGastos' : 'getDailyIngresos';
+        const url = CONFI.API_URL + '?action=' + action +
+                    '&year=' + year + '&month=' + month +
+                    '&callback=' + cb;
+
+        console.log(`📡 JSONP ${tipo} ${year}-${month}:`, url.substring(0, 100) + '...');
+        script.src = url;
+        document.head.appendChild(script);
+    });
+
+    return dailyInFlight[key];
 }
 
 let dailySupabaseChart = null;

@@ -49,10 +49,55 @@ class WalletAPI {
     }
 
     async loadBudgets() {
-        const data = await this.request('/budgets?limit=20');
-        this.budgets = data.budgets || data.items || data || [];
+        const allBudgets = [];
+        const limit = 20;           // ⚠️ Wallet tope duro
+        let offset = 0;
+        let page = 0;
+        const MAX_PAGES = 50;       // safety: 1000 presupuestos máx
+
+        while (page < MAX_PAGES) {
+            const data = await this.request(`/budgets?limit=${limit}&offset=${offset}`);
+
+            // Diagnóstico primera página
+            if (page === 0) {
+                console.log('🔍 /budgets respuesta cruda (pág 0):', data);
+            }
+
+            // Wallet devuelve { budgets: [...] } o { items: [...] } o array directo
+            const batch =
+                (Array.isArray(data)          ? data :
+                Array.isArray(data?.budgets) ? data.budgets :
+                Array.isArray(data?.items)   ? data.items :
+                Array.isArray(data?.data)    ? data.data :
+                []);
+
+            console.log(`📄 Página ${page}: ${batch.length} items (offset=${offset})`);
+
+            if (batch.length === 0) break;
+
+            allBudgets.push(...batch);
+
+            // Si devolvió menos del límite, ya no hay más
+            if (batch.length < limit) break;
+
+            offset += limit;
+            page++;
+        }
+
+        // Deduplicar por id (por si el backend repite con solapamiento)
+        const seen = new Set();
+        this.budgets = allBudgets.filter(b => {
+            const id = b?.id ?? b?.budgetId;
+            if (!id || seen.has(id)) return false;
+            seen.add(id);
+            return true;
+        });
+
+        console.log(`✅ Cargados ${this.budgets.length} presupuestos únicos (${allBudgets.length} filas crudas, ${page + 1} páginas)`);
+        console.log('📋 Nombres:', this.budgets.map(b => b.name));
+
         return this.budgets;
-    }
+}
 
     setBudgetMapping(localName, budgetId) {
         this.budgetMap[localName] = budgetId;

@@ -2858,7 +2858,7 @@ const CAT_DB = {
   'Intereses': {padre:'Gastos financieros',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:2,esHoja:false},
   'Intereses, dividendos': {padre:'',etiqueta:'Intereses, dividendos',tipo:'Ingresos',nivel:1,esHoja:true},
   'Internet': {padre:'Tecnología y comunicaciones',etiqueta:'Servicios',tipo:'Gastos',nivel:3,esHoja:true},
-  'Inversion': {padre:'Inversiones financieras',etiqueta:'Inversión',tipo:'Gastos',nivel:3,esHoja:true},
+  'Inversión': {padre:'',etiqueta:'Inversión',tipo:'Gastos',nivel:1,esHoja:true},
   'Inversiones': {padre:'',etiqueta:'Investment',tipo:'Ingresos',nivel:1,esHoja:false},
   'Inversiones financiera': {padre:'Gastos financieros',etiqueta:'Gastos financieros',tipo:'Gastos',nivel:2,esHoja:false},
   'Inversiones financieras': {padre:'Inversiones',etiqueta:'Inversión',tipo:'Gastos',nivel:2,esHoja:false},
@@ -4258,50 +4258,136 @@ async function testWalletConnection() {
 }
 
 function renderWalletBudgetMapping() {
+    if (typeof walletAPI === 'undefined' || !walletAPI) return;
+
     const section = document.getElementById('walletCatMappingSection');
     const list = document.getElementById('walletCatMappingList');
     section.style.display = 'block';
-    
-    // Título actualizado
-    section.querySelector('div:first-child').textContent = 'Mapeo de Presupuestos';
-    section.querySelector('div:nth-child(2)').textContent = 'Asocia cada categoría de tu Balance Sheet con un presupuesto de Wallet.';
-    
-    // Obtener categorías principales de gasto del CAT_DB
-    const gastoCats = Object.entries(CAT_DB)
-        .filter(([name, meta]) => meta.tipo === 'Gastos' && !meta.padre)
-        .sort((a, b) => a[0].localeCompare(b[0]));
-    
-    // Presupuestos de Wallet (filtrar solo los abiertos y mensuales para claridad)
-    const walletBudgets = walletAPI.budgets
-    .filter(b => !b.closed)
-    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
-    let html = '';
+    // Título y descripción
+    section.querySelector('div:first-child').textContent = 'Mapeo de Presupuestos';
+    section.querySelector('div:nth-child(2)').textContent =
+        'Asocia cada categoría del Balance Sheet con un presupuesto de Wallet.';
+
+    // Categorías de gasto del BS (nivel 1)
+    const gastoCats = Object.entries(CAT_DB)
+        .filter(([_, meta]) => meta.tipo === 'Gastos' && !meta.padre)
+        .sort((a, b) => a[0].localeCompare(b[0]));
+
+    // Presupuestos de Wallet
+    const walletBudgets = walletAPI.budgets
+        .filter(b => b.closed !== true)
+        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    // Budgets ya mapeados (para detectar duplicados)
+    const allMappings = walletAPI.getAllBudgetMappings();
+    const mappedIds = new Set(Object.values(allMappings).filter(Boolean));
+
+    // ── Sección 1: Categorías del Balance Sheet ──
+    let html = `
+        <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;
+                    letter-spacing:0.05em;margin-bottom:8px;">
+            Categorías del Balance Sheet (${gastoCats.length})
+        </div>
+    `;
+
     gastoCats.forEach(([localName, meta]) => {
-        const currentMap = walletAPI.getBudgetMapping(localName);
-        const matchedBudget = currentMap ? walletAPI.budgets.find(b => b.id === currentMap) : null;
-        
+        const currentMap = allMappings[localName] || '';
+        const matchedBudget = currentMap
+            ? walletAPI.budgets.find(b => b.id === currentMap)
+            : null;
+
+        // Sugerencia por nombre (case-insensitive, sin acentos)
+        const normalize = s => (s || '').toLowerCase()
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+        const suggestion = !currentMap
+            ? walletBudgets.find(b => normalize(b.name) === normalize(localName))
+            : null;
+
+        const borderColor = suggestion
+            ? 'rgba(34,197,94,0.5)'   // verde: hay sugerencia
+            : 'rgba(51,65,85,0.4)';
+
         html += `
-            <div style="display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid rgba(51,65,85,0.2);">
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 0;
+                        border-bottom:1px solid rgba(51,65,85,0.2);">
                 <div style="flex:1;min-width:0;">
-                    <div style="font-size:13px;font-weight:600;color:#f8fafc;">${localName}</div>
-                    <div style="font-size:11px;color:#64748b;">${meta.etiqueta} · RD$${(matchedBudget?.limit || 0).toLocaleString('es-DO')}</div>
+                    <div style="font-size:13px;font-weight:600;color:#f8fafc;">
+                        ${localName}
+                    </div>
+                    <div style="font-size:11px;color:#64748b;">
+                        ${meta.etiqueta}
+                        ${matchedBudget ? ' · RD$' + (matchedBudget.limit || 0).toLocaleString('es-DO') : ''}
+                        ${suggestion ? ' · <span style="color:#4ade80;">sugerido: ' + suggestion.name + '</span>' : ''}
+                    </div>
                 </div>
-                <select onchange="walletAPI.setBudgetMapping('${localName.replace(/'/g, "\\'")}', this.value)" 
-                    style="flex:1.2;min-width:180px;padding:8px 10px;border-radius:8px;border:1px solid rgba(51,65,85,0.4);background:rgba(15,23,42,0.6);color:#e2e8f0;font-size:12px;">
+                <select onchange="onWalletMappingChange('${localName.replace(/'/g, "\\'")}', this.value)"
+                        style="flex:1.2;min-width:180px;padding:8px 10px;border-radius:8px;
+                               border:1px solid ${borderColor};background:rgba(15,23,42,0.6);
+                               color:#e2e8f0;font-size:12px;">
                     <option value="">— Sin mapear —</option>
                     ${walletBudgets.map(b => {
                         const sel = currentMap === b.id ? 'selected' : '';
-                        const limit = b.limit ? `RD$${b.limit.toLocaleString('es-DO')}` : 'Sin límite';
-                        const tipoLabel = b.type === 'BUDGET_INTERVAL_YEAR' ? '📅 Anual' : '📆 Mensual';
-                        return `<option value="${b.id}" ${sel}>${b.name} · ${limit} · ${tipoLabel}</option>`;
+                        const usedElsewhere = mappedIds.has(b.id) && currentMap !== b.id;
+                        const limitTxt = b.limit ? `RD$${b.limit.toLocaleString('es-DO')}` : 'Sin límite';
+                        const tipo = b.type === 'BUDGET_INTERVAL_YEAR' ? '📅 Anual' : '📆 Mensual';
+                        const warn = usedElsewhere ? ' ⚠️ ya usado' : '';
+                        return `<option value="${b.id}" ${sel}>${b.name} · ${limitTxt} · ${tipo}${warn}</option>`;
                     }).join('')}
                 </select>
             </div>
         `;
     });
+
+    // ── Sección 2: Budgets de Wallet huérfanos ──
+    const orphanBudgets = walletBudgets.filter(b => !mappedIds.has(b.id));
+
+    if (orphanBudgets.length > 0) {
+        html += `
+            <div style="margin-top:24px;padding:14px;background:rgba(245,158,11,0.08);
+                        border:1px solid rgba(245,158,11,0.25);border-radius:10px;">
+                <div style="font-size:12px;font-weight:700;color:#fbbf24;
+                            text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px;">
+                    ⚠️ Presupuestos de Wallet sin mapear (${orphanBudgets.length})
+                </div>
+                <div style="font-size:11px;color:#94a3b8;margin-bottom:12px;line-height:1.5;">
+                    Estos budgets existen en Wallet pero no están vinculados a ninguna
+                    categoría del Balance Sheet. <strong>No se sincronizarán al guardar</strong>.
+                    Opciones:
+                    <br>• <em>Renombrar el budget en Wallet</em> para que coincida con una categoría del BS, o
+                    <br>• <em>Crear la categoría faltante</em> en tu hoja de cálculo (DB_CATEGORIAS) y agregarla a <code>CAT_DB</code>.
+                </div>
+                ${orphanBudgets.map(b => `
+                    <div style="display:flex;justify-content:space-between;align-items:center;
+                                padding:6px 0;border-bottom:1px solid rgba(51,65,85,0.15);">
+                        <span style="font-size:12px;color:#e2e8f0;">${b.name}</span>
+                        <span style="font-size:11px;color:#64748b;">
+                            ${b.limit ? 'RD$' + b.limit.toLocaleString('es-DO') : 'Sin límite'} ·
+                            ${b.type === 'BUDGET_INTERVAL_YEAR' ? 'Anual' : 'Mensual'}
+                        </span>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    } else {
+        html += `
+            <div style="margin-top:20px;padding:12px;background:rgba(34,197,94,0.08);
+                        border:1px solid rgba(34,197,94,0.25);border-radius:10px;
+                        font-size:12px;color:#4ade80;">
+                ✅ Todos los presupuestos de Wallet están mapeados.
+            </div>
+        `;
+    }
+
     list.innerHTML = html;
 }
+
+// Handler: guarda + re-renderiza para actualizar huérfanos y advertencias
+function onWalletMappingChange(localName, budgetId) {
+    walletAPI.setBudgetMapping(localName, budgetId || null);
+    renderWalletBudgetMapping();
+}
+
 
 // Hook: Sincronizar con Wallet al guardar presupuesto
 const originalSaveBudget = saveBudget;

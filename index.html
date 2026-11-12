@@ -6,7 +6,7 @@
   <title>Balance Sheet — Patrimonio Personal</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=expenses-single-month-20261112-1">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   
 
@@ -286,6 +286,11 @@
     <section id="expenses" class="section">
       <h2 class="section-title">Gastos</h2>
       <p class="section-subtitle">Desglose de gastos mensuales</p>
+      <div class="expenses-period-bar">
+        <label for="expensesMonthSelect">Mes a analizar</label>
+        <select id="expensesMonthSelect" class="year-select" onchange="onExpensesMonthChange(this.value)" aria-label="Seleccionar mes para la sección de gastos"></select>
+        <span>El mes seleccionado controla el resumen, la distribución y el detalle diario.</span>
+      </div>
       <div class="stats-grid" id="expensesStats"></div>
       <div class="two-col">
         <div class="chart-card">
@@ -311,7 +316,7 @@
         <div class="chart-header">
           <div>
             <div class="chart-title">Categorías de Gasto</div>
-            <div class="chart-subtitle">Último mes</div>
+              <div class="chart-subtitle">Mes seleccionado</div>
           </div>
         </div>
         <div id="expenseCategoriesList"></div>
@@ -323,7 +328,6 @@
             <div class="chart-title">💸 Gastos por Día</div>
             <div class="chart-subtitle">Detalle diario desde Supabase / Wallet</div>
           </div>
-          <select id="dailyGastosMonth" class="year-select" onchange="onDailyMonthChange('gastos')"></select>
         </div>
         <div class="stats-grid" id="dailyGastosStats"></div>
         <div class="chart-container" id="dailyGastosChart" style="height:280px;"></div>
@@ -391,11 +395,22 @@
     <section id="modeco" class="section">
       <h2 class="section-title">🏢 Modeco</h2>
       <p class="section-subtitle">Estado de resultados, clasificación contable y balance operativo — <span id="modecoMeta">—</span></p>
+      <div class="modeco-period-bar">
+        <label for="modecoMonthSelect">Período a analizar</label>
+        <select id="modecoMonthSelect" class="modeco-month-select" onchange="setModecoMonth(this.value)" aria-label="Seleccionar mes de Modeco"></select>
+        <span id="modecoPeriodHint">Los indicadores y el estado de resultados corresponden al período seleccionado.</span>
+      </div>
 
+      <section class="modeco-insights" id="modecoInsights" aria-live="polite" aria-label="Lectura ejecutiva del período"></section>
       <div class="stats-grid" id="modecoStats"></div>
+      <details class="modeco-formulas-card" id="modecoFormulas">
+        <summary>¿Cómo se calcula cada cifra?</summary>
+        <p class="modeco-formulas-intro">Fórmulas aplicadas al período seleccionado. El patrimonio utiliza el último saldo registrado.</p>
+        <div id="modecoFormulaPanel"></div>
+      </details>
 
       <div class="two-col">
-        <div class="chart-card">
+        <div class="chart-card modeco-chart-card">
           <div class="chart-header">
             <div>
               <div class="chart-title">Ingresos por Categoría</div>
@@ -404,7 +419,7 @@
           </div>
           <div class="chart-container" id="modecoIngresosChart"></div>
         </div>
-        <div class="chart-card">
+        <div class="chart-card modeco-chart-card">
           <div class="chart-header">
             <div>
               <div class="chart-title">Gastos por Clasificación</div>
@@ -415,7 +430,7 @@
         </div>
       </div>
 
-      <div class="chart-card">
+      <div class="chart-card modeco-chart-card">
         <div class="chart-header">
           <div>
             <div class="chart-title">Ingresos vs Gastos por Mes</div>
@@ -425,7 +440,7 @@
         <div class="chart-container" id="modecoIngresosVsGastosChart"></div>
       </div>
 
-      <div class="chart-card">
+      <div class="chart-card modeco-chart-card">
         <div class="chart-header">
           <div>
             <div class="chart-title">Cascada: Ingresos → Utilidad Neta</div>
@@ -435,7 +450,7 @@
         <div class="chart-container" id="modecoWaterfallChart"></div>
       </div>
 
-      <div class="chart-card">
+      <div class="chart-card modeco-chart-card">
         <div class="chart-header">
           <div>
             <div class="chart-title">Balance de Modeco</div>
@@ -448,11 +463,11 @@
         </div>
       </div>
 
-      <div class="chart-card">
+      <div class="chart-card modeco-chart-card">
         <div class="chart-header">
           <div>
             <div class="chart-title">Gastos por Categoría</div>
-            <div class="chart-subtitle">Mes actual etiquetado por clasificación contable</div>
+              <div class="chart-subtitle">Período seleccionado etiquetado por clasificación contable</div>
           </div>
         </div>
         <div id="modecoCategoriasList"></div>
@@ -698,6 +713,6 @@
 
   </main>
   <script src="wallet-api-real.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=expenses-single-month-20261112-1"></script>
 </body>
 </html>

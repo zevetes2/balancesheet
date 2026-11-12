@@ -19,6 +19,7 @@
     // CACHE DE DATOS DIARIOS (para proyecciones por categoría)
     // ============================================================
     const dailyCache = {}; // { 'gastos_2026_09': data, ... }
+    let expensesSelectedMonthKey = '';
 
     function addMonths(year, month, delta) {
         const d = new Date(year, month - 1 + delta, 1);
@@ -191,6 +192,7 @@
 
     let modecoData = null;
     let modecoLoadingPromise = null;
+    let modecoSelectedMonthIndex = 0;
 
     // === CACHE LOCAL ===
     const BS_CACHE_KEY = 'bs_cache_v2';
@@ -1487,19 +1489,119 @@ function loadDataJSONP() {
 
     // === RENDER EXPENSES ===
 
+    function getExpenseMonthKey(value) {
+        if (!value) return '';
+        if (value instanceof Date && !Number.isNaN(value.getTime())) {
+            return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}`;
+        }
+
+        const text = String(value).trim();
+        let match = text.match(/^(\d{4})-(\d{1,2})(?:-\d{1,2})?/);
+        if (match) return `${match[1]}-${String(Number(match[2])).padStart(2, '0')}`;
+
+        // DB_PRESUPUESTO serializa sus fechas como M/D/YYYY.
+        match = text.match(/^(\d{1,2})\/\d{1,2}\/((?:19|20)\d{2})$/);
+        if (match) return `${match[2]}-${String(Number(match[1])).padStart(2, '0')}`;
+
+        // Los historiales también pueden venir como "Jun'26".
+        match = text.match(/^([A-Za-z]{3})'?([0-9]{2}|[0-9]{4})$/);
+        if (match) {
+            const monthIndex = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].indexOf(match[1]);
+            if (monthIndex >= 0) {
+                const year = match[2].length === 2 ? `20${match[2]}` : match[2];
+                return `${year}-${String(monthIndex + 1).padStart(2, '0')}`;
+            }
+        }
+
+        const parsed = new Date(text);
+        if (!Number.isNaN(parsed.getTime())) {
+            return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}`;
+        }
+        return '';
+    }
+
+    function formatExpenseMonth(monthKey) {
+        const match = String(monthKey || '').match(/^(\d{4})-(\d{2})$/);
+        if (!match) return 'Período';
+        const date = new Date(Number(match[1]), Number(match[2]) - 1, 1);
+        const label = date.toLocaleDateString('es-DO', { month: 'long', year: 'numeric' });
+        return label.charAt(0).toUpperCase() + label.slice(1);
+    }
+
+    function getExpenseMonthKeys() {
+        const keys = new Set();
+        const add = value => {
+            const key = getExpenseMonthKey(value);
+            if (key) keys.add(key);
+        };
+        (appData?.presupuesto || []).filter(p => p.tipo === 'Gastos').forEach(p => add(p.mesAno));
+        (appData?.summary?.gastosTotal?.history || []).forEach(item => add(item.isoDate || item.date));
+        Object.values(appData?.gastos || {}).forEach(category =>
+            (category.history || []).forEach(item => add(item.isoDate || item.date))
+        );
+
+        // Permitir consultar también meses recientes aunque aún no tengan presupuesto cargado.
+        const now = new Date();
+        for (let offset = 0; offset < 24; offset++) {
+            const date = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+            keys.add(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
+        }
+        return [...keys].sort((a, b) => b.localeCompare(a));
+    }
+
+    function populateExpensesMonthSelector() {
+        const select = document.getElementById('expensesMonthSelect');
+        if (!select) return;
+        const monthKeys = getExpenseMonthKeys();
+        const now = new Date();
+        const currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        if (!monthKeys.includes(expensesSelectedMonthKey)) {
+            expensesSelectedMonthKey = monthKeys.includes(currentKey) ? currentKey : (monthKeys[0] || '');
+        }
+        select.replaceChildren();
+        monthKeys.forEach(key => {
+            const option = document.createElement('option');
+            option.value = key;
+            option.textContent = formatExpenseMonth(key);
+            option.selected = key === expensesSelectedMonthKey;
+            select.appendChild(option);
+        });
+    }
+
+    function onExpensesMonthChange(monthKey) {
+        if (!/^\d{4}-\d{2}$/.test(monthKey)) return;
+        expensesSelectedMonthKey = monthKey;
+        renderExpenses();
+        renderDailySupabase('gastos');
+        ['expenses', 'expensesPie'].forEach(key => {
+            if (charts[key]) {
+                charts[key].destroy();
+                delete charts[key];
+            }
+        });
+        renderExpensesChart();
+        renderExpensesPieChart();
+    }
+
+    function clearExpenseProjectionCharts() {
+        Object.keys(charts).filter(key => key.startsWith('expenseProjChart_')).forEach(key => {
+            charts[key].destroy();
+            delete charts[key];
+        });
+    }
+
     function renderExpenses() {
-    const s = appData.summary;
+    populateExpensesMonthSelector();
     const presupuesto = appData.presupuesto || [];
     const categorias = appData.categorias || [];
-    
-    // Filtrar gastos del mes actual
-    const mesActual = '6/1/2026';
-    let gastosMostrar = presupuesto.filter(p => 
-        p.tipo === 'Gastos' && formatDateToString(p.mesAno) === mesActual
+    const selectedMonthLabel = formatExpenseMonth(expensesSelectedMonthKey);
+    const selectedMonthIsCurrent = expensesSelectedMonthKey === getExpenseMonthKey(new Date());
+
+    // Mostrar solo las líneas de presupuesto del mes elegido; nunca mezclar meses como respaldo.
+    const gastosMostrar = presupuesto.filter(p =>
+        p.tipo === 'Gastos' && getExpenseMonthKey(p.mesAno) === expensesSelectedMonthKey
     );
-    if (gastosMostrar.length === 0) {
-        gastosMostrar = presupuesto.filter(p => p.tipo === 'Gastos');
-    }
+    const hasBudgetForMonth = gastosMostrar.length > 0;
     
     // Totales
     const totalPresupuestado = gastosMostrar.reduce((a, b) => a + b.montoPresupuestado, 0);
@@ -1512,30 +1614,31 @@ function loadDataJSONP() {
     // Cards de resumen
     const html = `
         <div class="stat-card">
-            <div class="stat-header"><span class="stat-label">Presupuesto Total</span></div>
-            <div class="stat-value">${fmtMoney(totalPresupuestado)}</div>
-            <div class="stat-sub">${pctConsumido.toFixed(1)}% consumido</div>
+            <div class="stat-header"><span class="stat-label">Presupuesto · ${selectedMonthLabel}</span></div>
+            <div class="stat-value">${hasBudgetForMonth ? fmtMoney(totalPresupuestado) : '—'}</div>
+            <div class="stat-sub">${hasBudgetForMonth ? `${pctConsumido.toFixed(1)}% consumido` : 'Sin presupuesto registrado para este mes'}</div>
         </div>
         <div class="stat-card">
-            <div class="stat-header"><span class="stat-label">Gasto Real</span></div>
-            <div class="stat-value" style="color:${pctConsumido > 100 ? '#f87171' : pctConsumido > 80 ? '#f59e0b' : '#4ade80'}">${fmtMoney(totalReal)}</div>
-            <div class="stat-sub">${fmtMoney(Math.abs(totalDiferencia))} ${totalDiferencia >= 0 ? 'restante' : 'excedido'}</div>
+            <div class="stat-header"><span class="stat-label">Gasto Real · ${selectedMonthLabel}</span></div>
+            <div class="stat-value" style="color:${hasBudgetForMonth ? (pctConsumido > 100 ? '#f87171' : pctConsumido > 80 ? '#f59e0b' : '#4ade80') : '#94a3b8'}">${hasBudgetForMonth ? fmtMoney(totalReal) : '—'}</div>
+            <div class="stat-sub">${hasBudgetForMonth ? `${fmtMoney(Math.abs(totalDiferencia))} ${totalDiferencia >= 0 ? 'restante' : 'excedido'}` : 'Sin datos presupuestarios para este mes'}</div>
         </div>
         <div class="stat-card">
             <div class="stat-header"><span class="stat-label">En Riesgo</span></div>
             <div class="stat-value" style="color:${enRiesgo > 0 ? '#f59e0b' : '#4ade80'}">${enRiesgo}</div>
-            <div class="stat-sub">de ${gastosMostrar.length} categorías</div>
+        <div class="stat-sub">de ${gastosMostrar.length} categorías · ${selectedMonthLabel}</div>
         </div>
         <div class="stat-card">
             <div class="stat-header"><span class="stat-label">Excedidas</span></div>
             <div class="stat-value" style="color:${excedidos > 0 ? '#f87171' : '#4ade80'}">${excedidos}</div>
-            <div class="stat-sub">categorías sobrepasadas</div>
+        <div class="stat-sub">categorías sobrepasadas · ${selectedMonthLabel}</div>
         </div>
     `;
     document.getElementById('expensesStats').innerHTML = html;
     
     // Lista de categorías
-    const expenseList = gastosMostrar
+    clearExpenseProjectionCharts();
+    const expenseList = [...gastosMostrar]
     .sort((a, b) => b.gastoReal - a.gastoReal)
     .map((p, idx) => {   // ← NUEVO: recibimos idx
         const categoria = categorias.find(c => c.id == p.idCategoria);
@@ -1548,7 +1651,10 @@ function loadDataJSONP() {
         const emelyPct = p.montoPresupuestado > 0 ? (p.gastoEmely / p.montoPresupuestado) * 100 : 0;
         const remainingPct = Math.max(0, 100 - anthonyPct - emelyPct);
 
-        const chartId = `expenseProjChart_${idx}`;   // ← NUEVO
+        const chartId = `expenseProjChart_${idx}`;
+        const monthInfo = selectedMonthIsCurrent
+          ? `${p.diasRestantes} días restantes · ${fmtMoney(p.recomendacionDiaria)}/día`
+          : `${fmtMoney(Math.max(0, p.montoPresupuestado - p.gastoReal))} disponibles al cierre`;
 
         return `
             <div class="expense-card" style="border-left: 3px solid ${color}">
@@ -1559,7 +1665,7 @@ function loadDataJSONP() {
                         <div class="expense-pct" style="color:${color}">${pct.toFixed(1)}%</div>
                     </div>
                     <div class="expense-meta">
-                        ${fmtMoney(p.gastoReal)} / ${fmtMoney(p.montoPresupuestado)} · ${p.diasRestantes} días restantes · ${fmtMoney(p.recomendacionDiaria)}/día
+                        ${fmtMoney(p.gastoReal)} / ${fmtMoney(p.montoPresupuestado)} · ${monthInfo}
                     </div>
                     <div class="expense-bar-track">
                         <div class="expense-bar-anthony" style="width:${anthonyPct}%"></div>
@@ -1588,7 +1694,7 @@ function loadDataJSONP() {
             </div>
             ` : ''}
             <!-- ← NUEVO: contenedor de proyección -->
-            <div class="expense-projection" data-proj-chart-id="${chartId}"
+            ${selectedMonthIsCurrent ? `<div class="expense-projection" data-proj-chart-id="${chartId}"
                  style="display:none;padding:14px 16px;background:rgba(15,23,42,0.55);
                         border:1px solid rgba(51,65,85,0.2);border-top:none;
                         border-radius:0 0 12px 12px;margin-top:-10px;margin-bottom:10px;">
@@ -1597,14 +1703,17 @@ function loadDataJSONP() {
                     📈 Proyección del mes · ${nombre}
                 </div>
                 <div class="chart-container" id="${chartId}" style="height:240px;"></div>
-            </div>
+            </div>` : ''}
         `;
     }).join('');
     
-    document.getElementById('expenseCategoriesList').innerHTML = 
-        `<div class="asset-list">${expenseList}</div>`;
+    document.getElementById('expenseCategoriesList').innerHTML = hasBudgetForMonth
+        ? `<div class="asset-list">${expenseList}</div>`
+        : '<div class="modeco-empty-state">No hay categorías presupuestadas para este mes. El detalle diario sigue mostrando las transacciones disponibles.</div>';
     // ← NUEVO: dispara la carga async de proyecciones
-    setTimeout(() => loadExpenseProjections(gastosMostrar), 50);
+    if (selectedMonthIsCurrent && gastosMostrar.length) {
+        setTimeout(() => loadExpenseProjections(gastosMostrar), 50);
+    }
 }
 
 
@@ -2374,16 +2483,15 @@ function renderRatiosRadarChart() {
     function renderExpensesChart() {
     const ctx = getCanvas('expensesChart');
     if (!ctx) return;
-    //const g = appData.summary.gastosTotal.history;
     const g = appData.summary.gastosTotal.history.map(d => ({
         date: formatShortDate(d.date),
+        monthKey: getExpenseMonthKey(d.isoDate || d.date),
         value: d.value
     }));
-    //const p = appData.summary.presupuesto.history;
-    const p = appData.summary.presupuesto.history.map(d => ({
-      date: formatShortDate(d.date),
-      value: d.value
-    }));
+    const budgetsByMonth = new Map((appData.summary.presupuesto.history || []).map(d => [
+      getExpenseMonthKey(d.isoDate || d.date), d.value
+    ]));
+    const selectedMonthKey = expensesSelectedMonthKey;
     charts.expenses = new Chart(ctx, {
         type: 'bar',
         data: {
@@ -2392,14 +2500,14 @@ function renderRatiosRadarChart() {
             {
             label: 'Gastos',
             data: g.map(d => d.value),
-            backgroundColor: '#ef4444',
+            backgroundColor: g.map(d => d.monthKey === selectedMonthKey ? '#b91c1c' : '#ef4444'),
             borderRadius: 4,
             barPercentage: 0.6,
             categoryPercentage: 0.8
             },
             {
             label: 'Presupuesto',
-            data: p.slice(0, g.length).map(d => d.value),
+            data: g.map(d => budgetsByMonth.get(d.monthKey) ?? null),
             backgroundColor: 'rgba(148,163,184,0.3)',
             borderRadius: 4,
             barPercentage: 0.6,
@@ -2428,14 +2536,25 @@ function renderRatiosRadarChart() {
     function renderExpensesPieChart() {
     const ctx = getCanvas('expensesPieChart');
     if (!ctx) return;
-    const entries = Object.entries(appData.gastos).sort((a, b) => b[1].current - a[1].current);
+    const entries = Object.entries(appData.gastos || {}).map(([name, category]) => {
+      const history = category.history || [];
+      const monthEntry = history.find(item => getExpenseMonthKey(item.isoDate || item.date) === expensesSelectedMonthKey);
+      return { name, value: monthEntry?.value || 0 };
+    }).filter(item => item.value > 0).sort((a, b) => b.value - a.value);
+
+    if (!entries.length) {
+      document.getElementById('expensesPieChart').innerHTML =
+        '<div class="modeco-empty-state">Sin distribución de gastos para el mes seleccionado</div>';
+      charts.expensesPie = null;
+      return;
+    }
     
     charts.expensesPie = new Chart(ctx, {
         type: 'doughnut',
         data: {
-        labels: entries.map(e => e[0]),
+        labels: entries.map(e => e.name),
         datasets: [{
-            data: entries.map(e => e[1].current),
+            data: entries.map(e => e.value),
             backgroundColor: ['#f97316', '#8b5cf6', '#0ea5e9', '#22c55e', '#ef4444', '#64748b', '#ec4899', '#3b82f6', '#f59e0b', '#14b8a6'],
             borderWidth: 0,
             hoverOffset: 6
@@ -5107,6 +5226,8 @@ async function renderModecoTab() {
   try {
     if (!modecoData) await loadModecoData();
 
+    resetModecoSelectedCharts();
+    renderModecoMonthSelector();
     renderModecoStats();
     renderModecoIngresosChart();
     renderModecoGastosPorClasifChart();
@@ -5126,11 +5247,118 @@ async function renderModecoTab() {
 }
 
 function getModecoMesActual() {
-  return modecoData?.resumen?.mesActual || modecoData?.meses?.[0] || null;
+  const meses = modecoData?.meses || [];
+  return meses[modecoSelectedMonthIndex] || modecoData?.resumen?.mesActual || meses[0] || null;
 }
 
 function getModecoMesAnterior() {
-  return modecoData?.resumen?.mesAnterior || modecoData?.meses?.[1] || null;
+  const meses = modecoData?.meses || [];
+  return meses[modecoSelectedMonthIndex + 1] || null;
+}
+
+function formatModecoPeriodLabel(value) {
+  if (!value) return '—';
+  const monthNames = {
+    Jan: 'Ene', Feb: 'Feb', Mar: 'Mar', Apr: 'Abr', May: 'May', Jun: 'Jun',
+    Jul: 'Jul', Aug: 'Ago', Sep: 'Sep', Oct: 'Oct', Nov: 'Nov', Dec: 'Dic'
+  };
+  const label = String(value).trim();
+
+  // ISO date: take year/month directly to avoid timezone shifts around Jan 1.
+  const isoMatch = label.match(/^(\d{4})-(\d{2})(?:-\d{2})?/);
+  if (isoMatch) {
+    const month = Number(isoMatch[2]);
+    const names = Object.values(monthNames);
+    return month >= 1 && month <= 12 ? `${names[month - 1]} ${isoMatch[1]}` : label;
+  }
+
+  // Existing labels such as Aug'26 or Oct 2026.
+  const shortMatch = label.match(/^([A-Za-z]{3})[' ]?(\d{2,4})$/);
+  if (shortMatch && monthNames[shortMatch[1]]) {
+    const year = shortMatch[2].length === 2 ? `20${shortMatch[2]}` : shortMatch[2];
+    return `${monthNames[shortMatch[1]]} ${year}`;
+  }
+
+  // Date strings such as "Thu Oct 01 2026 00:00:00 GMT-0400 ...".
+  const date = new Date(label);
+  if (!Number.isNaN(date.getTime())) {
+    const names = Object.values(monthNames);
+    return `${names[date.getMonth()]} ${date.getFullYear()}`;
+  }
+  return label;
+}
+
+function renderModecoMonthSelector() {
+  const select = document.getElementById('modecoMonthSelect');
+  if (!select) return;
+  const meses = modecoData?.meses || [];
+  if (!meses.length) {
+    select.innerHTML = '<option value="0">Sin períodos disponibles</option>';
+    select.disabled = true;
+    return;
+  }
+  modecoSelectedMonthIndex = Math.min(modecoSelectedMonthIndex, meses.length - 1);
+  select.disabled = false;
+  select.innerHTML = meses.map((mes, index) =>
+    `<option value="${index}" ${index === modecoSelectedMonthIndex ? 'selected' : ''}>${formatModecoPeriodLabel(mes.mes) || `Período ${index + 1}`}</option>`
+  ).join('');
+  const hint = document.getElementById('modecoPeriodHint');
+  if (hint) hint.textContent = 'Indicadores, gráficos y categorías corresponden al período seleccionado. El balance refleja el último saldo disponible.';
+}
+
+function getModecoCategoryValue(category) {
+  const historyValue = category?.history?.[modecoSelectedMonthIndex]?.value;
+  const monthValue = getModecoMesActual()?.valores?.[category?.name];
+  return Number(historyValue ?? monthValue ?? (modecoSelectedMonthIndex === 0 ? category?.current : 0)) || 0;
+}
+
+function renderModecoEmptyChart(container, chartKey, message) {
+  resetModecoChart(chartKey, container);
+  const emptyState = document.createElement('div');
+  emptyState.className = 'modeco-empty-state';
+  emptyState.textContent = message;
+  container.replaceChildren(emptyState);
+  container.classList.add('is-empty');
+}
+
+function resetModecoChart(chartKey, container) {
+  if (charts[chartKey]) {
+    charts[chartKey].destroy();
+    delete charts[chartKey];
+  }
+  container.querySelectorAll('canvas').forEach(canvas => {
+    const registeredChart = Chart.getChart ? Chart.getChart(canvas) : null;
+    if (registeredChart) registeredChart.destroy();
+    canvas.remove();
+  });
+  container.classList.remove('is-empty');
+  container.replaceChildren();
+}
+
+function resetModecoSelectedCharts() {
+  [
+    ['modecoIngresos', 'modecoIngresosChart'],
+    ['modecoGastosClasif', 'modecoGastosClasificacionChart'],
+    ['modecoIngVsGas', 'modecoIngresosVsGastosChart'],
+    ['modecoWaterfall', 'modecoWaterfallChart']
+  ].forEach(([key, id]) => {
+    const container = document.getElementById(id);
+    if (container) resetModecoChart(key, container);
+  });
+}
+
+function setModecoMonth(value) {
+  const index = Number.parseInt(value, 10);
+  if (!Number.isInteger(index) || index < 0 || index >= (modecoData?.meses?.length || 0)) return;
+  modecoSelectedMonthIndex = index;
+  renderModecoMonthSelector();
+  resetModecoSelectedCharts();
+  renderModecoStats();
+  renderModecoIngresosChart();
+  renderModecoGastosPorClasifChart();
+  renderModecoIngresosVsGastosChart();
+  renderModecoWaterfallChart();
+  renderModecoCategoriasList();
 }
 
 function getModecoBalanceActual() {
@@ -5179,6 +5407,8 @@ function renderModecoStats() {
   const balanceAnterior = getModecoBalanceAnterior();
 
   if (!mes) {
+    const insightsEl = document.getElementById('modecoInsights');
+    if (insightsEl) insightsEl.innerHTML = '';
     document.getElementById('modecoStats').innerHTML = `
       <div class="stat-card" style="grid-column:1/-1">
         <div class="stat-value" style="font-size:16px;color:#94a3b8">Sin datos mensuales de Modeco</div>
@@ -5189,13 +5419,19 @@ function renderModecoStats() {
 
   const utilidad = mes.utilidadNeta || 0;
   const margen = mes.margenNeto || 0;
+  const utilidadAnterior = mesAnterior?.utilidadNeta || 0;
+  const utilidadChangePct = utilidadAnterior !== 0
+    ? ((utilidad - utilidadAnterior) / Math.abs(utilidadAnterior)) * 100
+    : 0;
   const patrimonioChange = balance.patrimonio - balanceAnterior.patrimonio;
   const patrimonioChangePct = balanceAnterior.patrimonio !== 0
     ? (patrimonioChange / Math.abs(balanceAnterior.patrimonio)) * 100
     : 0;
 
   document.getElementById('modecoMeta').textContent =
-    `${mes.mes || '—'} · ${modecoData.metadata?.totalMonths || 0} meses`;
+    `${formatModecoPeriodLabel(mes.mes)} seleccionado · ${modecoData.metadata?.totalMonths || modecoData.meses?.length || 0} períodos disponibles`;
+
+  renderModecoInsights(mes, mesAnterior);
 
   document.getElementById('modecoStats').innerHTML = `
     <div class="stat-card success">
@@ -5204,7 +5440,7 @@ function renderModecoStats() {
         ${mesAnterior ? getChangeBadge(mesAnterior.ingresos !== 0 ? ((mes.ingresos - mesAnterior.ingresos) / Math.abs(mesAnterior.ingresos)) * 100 : 0) : ''}
       </div>
       <div class="stat-value">${fmtMoney(mes.ingresos || 0)}</div>
-      <div class="stat-sub">${mes.mes || 'Mes actual'}</div>
+      <div class="stat-sub">${formatModecoPeriodLabel(mes.mes)}</div>
       <div class="stat-bar" style="--bar-width:100%"></div>
     </div>
 
@@ -5214,14 +5450,14 @@ function renderModecoStats() {
         ${mesAnterior ? getChangeBadge(mesAnterior.gastos !== 0 ? ((mes.gastos - mesAnterior.gastos) / Math.abs(mesAnterior.gastos)) * 100 : 0) : ''}
       </div>
       <div class="stat-value" style="color:#f87171">${fmtMoney(mes.gastos || 0)}</div>
-      <div class="stat-sub">COGS ${fmtMoney(mes.clasificaciones?.COGS || 0)} · OPEX ${fmtMoney(mes.clasificaciones?.OPEX || 0)}</div>
+      <div class="stat-sub">COGS ${fmtMoney(mes.clasificaciones?.COGS || 0)} · OPEX ${fmtMoney(mes.clasificaciones?.OPEX || 0)} · CAPEX ${fmtMoney(mes.clasificaciones?.CAPEX || 0)} · Modeco ${fmtMoney(mes.clasificaciones?.Modeco || 0)}</div>
       <div class="stat-bar" style="--bar-width:${mes.ingresos > 0 ? Math.min((mes.gastos / mes.ingresos) * 100, 100).toFixed(1) : 0}%"></div>
     </div>
 
     <div class="stat-card ${utilidad >= 0 ? 'success' : 'warning'}">
       <div class="stat-header">
         <span class="stat-label">Utilidad Neta</span>
-        ${getChangeBadge(margen)}
+        ${mesAnterior ? getChangeBadge(utilidadChangePct) : ''}
       </div>
       <div class="stat-value" style="color:${utilidad >= 0 ? '#4ade80' : '#f87171'}">${fmtMoney(utilidad)}</div>
       <div class="stat-sub">Antes de CAPEX · Flujo post-CAPEX: ${fmtMoney(mes.flujoDespuesCapex || 0)}</div>
@@ -5247,6 +5483,109 @@ function renderModecoStats() {
       <div class="stat-bar" style="--bar-width:${balance.activos > 0 ? Math.max(0, Math.min((balance.patrimonio / balance.activos) * 100, 100)).toFixed(1) : 0}%"></div>
     </div>
   `;
+  renderModecoFormulaPanel(mes, balance);
+}
+
+function renderModecoInsights(mes, mesAnterior) {
+  const container = document.getElementById('modecoInsights');
+  if (!container) return;
+
+  const ingresos = Number(mes.ingresos) || 0;
+  const gastos = Number(mes.gastos) || 0;
+  const utilidad = Number(mes.utilidadNeta) || 0;
+  const flujo = Number(mes.flujoDespuesCapex) || 0;
+  const categorias = Object.values(modecoData?.categorias || {}).map(cat => ({
+    ...cat,
+    valor: getModecoCategoryValue(cat)
+  }));
+  const topIngreso = categorias
+    .filter(cat => cat.clasificacion === 'Ingreso' && cat.valor > 0)
+    .sort((a, b) => b.valor - a.valor)[0];
+  const topGasto = categorias
+    .filter(cat => cat.clasificacion !== 'Ingreso' && cat.valor > 0)
+    .sort((a, b) => b.valor - a.valor)[0];
+  const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[char]);
+  const signedChange = (current, previous) => {
+    const delta = (Number(current) || 0) - (Number(previous) || 0);
+    const pct = previous ? (delta / Math.abs(previous)) * 100 : null;
+    const direction = delta > 0 ? 'subió' : delta < 0 ? 'bajó' : 'se mantuvo';
+    return `${direction} ${fmtMoney(Math.abs(delta))}${pct === null ? '' : ` (${Math.abs(pct).toFixed(1)}%)`}`;
+  };
+
+  const resultText = ingresos > 0
+    ? `El período ${utilidad >= 0 ? `generó ${fmtMoney(utilidad)} de utilidad neta` : `cerró con una pérdida de ${fmtMoney(Math.abs(utilidad))}`} (margen ${((utilidad / ingresos) * 100).toFixed(2)}%). El flujo después de CAPEX fue ${fmtMoney(flujo)}.`
+    : 'No hay ingresos registrados en este período; los márgenes no permiten evaluar rentabilidad.';
+  const incomeText = topIngreso && ingresos > 0
+    ? `${topIngreso.name} aporta ${fmtMoney(topIngreso.valor)} (${(topIngreso.valor / ingresos * 100).toFixed(1)}% de los ingresos).`
+    : 'No hay una categoría de ingreso con monto positivo en este período.';
+  const costText = topGasto && gastos > 0
+    ? `${topGasto.name} es el mayor gasto: ${fmtMoney(topGasto.valor)} (${(topGasto.valor / gastos * 100).toFixed(1)}% del total).`
+    : 'No hay gastos registrados en este período.';
+  const comparisonText = mesAnterior
+    ? `Ingresos ${signedChange(mes.ingresos, mesAnterior.ingresos)}; gastos ${signedChange(mes.gastos, mesAnterior.gastos)}; utilidad neta ${signedChange(mes.utilidadNeta, mesAnterior.utilidadNeta)} frente a ${formatModecoPeriodLabel(mesAnterior.mes)}.`
+    : 'No hay un período anterior para comparar.';
+
+  container.innerHTML = `
+    <div class="modeco-insights-heading">
+      <div><span class="modeco-insights-eyebrow">LECTURA EJECUTIVA</span><h3>${escape(formatModecoPeriodLabel(mes.mes))}</h3></div>
+      <p>${resultText}</p>
+    </div>
+    <div class="modeco-insights-grid">
+      <article class="modeco-insight-item"><span>Motor de ingresos</span><strong>${incomeText}</strong></article>
+      <article class="modeco-insight-item"><span>Mayor costo</span><strong>${costText}</strong></article>
+      <article class="modeco-insight-item"><span>Contra el mes anterior</span><strong>${comparisonText}</strong></article>
+    </div>
+    <p class="modeco-insights-note">La utilidad neta excluye CAPEX; el flujo después de CAPEX lo resta. La comparación es nominal y no ajusta estacionalidad.</p>
+  `;
+}
+
+function renderModecoFormulaPanel(mes, balance) {
+  const container = document.getElementById('modecoFormulaPanel');
+  if (!container) return;
+  const groups = mes.clasificaciones || {};
+  const money = value => fmtMoney(value || 0);
+  const formula = (label, expression, result, note = '') => `
+    <div class="modeco-formula-row">
+      <span class="modeco-formula-name">${label}</span>
+      <span class="modeco-formula-expression">${expression}</span>
+      <strong>${money(result)}</strong>
+      ${note ? `<small>${note}</small>` : ''}
+    </div>`;
+  const rate = (label, numerator, base, value) => `
+    <div class="modeco-formula-row">
+      <span class="modeco-formula-name">${label}</span>
+      <span class="modeco-formula-expression">${base ? `${money(numerator)} ÷ ${money(base)} × 100` : 'Sin ingresos; el backend establece el margen en 0%'}</span>
+      <strong>${(value || 0).toFixed(2)}%</strong>
+    </div>`;
+
+  container.innerHTML = `
+    <div class="modeco-formula-grid">
+      <section class="modeco-formula-group">
+        <h3>Resultados del período</h3>
+        <p class="modeco-formula-note">COGS: costos directos de venta/producción. OPEX: costos de operación. CAPEX: compra o mejora de activos. Modeco: impuestos, intereses, depreciación y otros gastos configurados.</p>
+        ${formula('Ingresos', 'Suma de categorías clasificadas como Ingreso', mes.ingresos)}
+        ${formula('Gastos totales', 'COGS + OPEX + CAPEX + Modeco', mes.gastos)}
+        ${formula('Utilidad bruta', `${money(mes.ingresos)} − ${money(groups.COGS)}`, mes.utilidadBruta)}
+        ${formula('Utilidad operativa', `${money(mes.utilidadBruta)} − ${money(groups.OPEX)}`, mes.utilidadOperativa)}
+        ${formula('Utilidad neta', `${money(mes.utilidadOperativa)} − ${money(groups.Modeco)}`, mes.utilidadNeta, 'No resta CAPEX. El indicador porcentual junto a Ingresos, Gastos y Utilidad compara con el mes anterior.')}
+        ${formula('Flujo después de CAPEX', `${money(mes.utilidadNeta)} − ${money(groups.CAPEX)}`, mes.flujoDespuesCapex, 'Utilidad neta menos CAPEX; no incluye otros movimientos de efectivo.')}
+      </section>
+      <section class="modeco-formula-group">
+        <h3>Márgenes</h3>
+        ${rate('Margen bruto', mes.utilidadBruta, mes.ingresos, mes.margenBruto)}
+        ${rate('Margen operativo', mes.utilidadOperativa, mes.ingresos, mes.margenOperativo)}
+        ${rate('Margen neto', mes.utilidadNeta, mes.ingresos, mes.margenNeto)}
+        <p class="modeco-formula-note">Cada margen indica qué porcentaje de los ingresos queda después del nivel de costos correspondiente. Si los ingresos son cero, el backend devuelve 0%.</p>
+      </section>
+      <section class="modeco-formula-group">
+        <h3>Posición de Modeco</h3>
+        ${formula('Activos líquidos', 'BHD Modeco + efectivo Modeco + efectivo USD Modeco', balance.activos)}
+        ${formula('Patrimonio Modeco', `${money(balance.activos)} − ${money(balance.prestamo)}`, balance.patrimonio, 'Usa el último saldo disponible; no cambia al elegir otro mes.')}
+        <p class="modeco-formula-note">El porcentaje junto al patrimonio compara el saldo actual con el saldo del mes anterior.</p>
+      </section>
+    </div>`;
 }
 
 function renderModecoIngresosChart() {
@@ -5255,15 +5594,16 @@ function renderModecoIngresosChart() {
 
   const categorias = Object.values(modecoData?.categorias || {})
     .filter(c => (c.clasificacion || getModecoClasificacion(c.name)) === 'Ingreso')
-    .filter(c => (c.current || 0) > 0)
-    .sort((a, b) => b.current - a.current);
+    .map(c => ({ ...c, selectedValue: getModecoCategoryValue(c) }))
+    .filter(c => c.selectedValue > 0)
+    .sort((a, b) => b.selectedValue - a.selectedValue);
 
   if (categorias.length === 0) {
-    container.innerHTML = '<div style="color:#64748b;text-align:center;padding:60px 16px;">Sin ingresos registrados en el mes actual</div>';
-    charts.modecoIngresos = null;
+    renderModecoEmptyChart(container, 'modecoIngresos', 'Sin ingresos registrados en el período seleccionado');
     return;
   }
 
+  container.classList.remove('is-empty');
   const ctx = getCanvas('modecoIngresosChart');
   if (!ctx) return;
 
@@ -5273,7 +5613,7 @@ function renderModecoIngresosChart() {
       labels: categorias.map(c => c.name.replace('Modeco - ', '')),
       datasets: [{
         label: 'Ingresos',
-        data: categorias.map(c => c.current || 0),
+        data: categorias.map(c => c.selectedValue),
         backgroundColor: categorias.map((_, i) => [
           '#22c55e', '#10b981', '#84cc16', '#14b8a6', '#4ade80'
         ][i % 5]),
@@ -5325,11 +5665,11 @@ function renderModecoGastosPorClasifChart() {
   const values = labels.map(k => clasif[k] || 0);
 
   if (values.every(v => v === 0)) {
-    container.innerHTML = '<div style="color:#64748b;text-align:center;padding:60px 16px;">Sin gastos registrados en el mes actual</div>';
-    charts.modecoGastosClasif = null;
+    renderModecoEmptyChart(container, 'modecoGastosClasif', 'Sin gastos registrados en el período seleccionado');
     return;
   }
 
+  container.classList.remove('is-empty');
   const ctx = getCanvas('modecoGastosClasificacionChart');
   if (!ctx) return;
 
@@ -5392,7 +5732,7 @@ function renderModecoIngresosVsGastosChart() {
 
   charts.modecoIngVsGas = new Chart(ctx, {
     data: {
-      labels: meses.map(m => formatShortDate(m.mes)),
+      labels: meses.map(m => formatModecoPeriodLabel(m.mes)),
       datasets: [
         {
           type: 'bar',
@@ -5698,46 +6038,119 @@ function renderModecoCategoriasList() {
   const container = document.getElementById('modecoCategoriasList');
   if (!container) return;
 
-  const categorias = Object.values(modecoData?.categorias || {})
-    .filter(c => (c.clasificacion || getModecoClasificacion(c.name)) !== 'Ingreso')
-    .filter(c => (c.current || 0) > 0)
-    .sort((a, b) => b.current - a.current);
-
-  if (categorias.length === 0) {
-    container.innerHTML = '<div style="color:#64748b;text-align:center;padding:24px;">Sin gastos en el mes actual</div>';
+  const sourceCategories = Object.values(modecoData?.categorias || {})
+    .filter(category => (category.clasificacion || getModecoClasificacion(category.name)) !== 'Ingreso')
+    .map(category => ({ ...category, selectedValue: getModecoCategoryValue(category) }));
+  if (sourceCategories.length === 0) {
+    container.innerHTML = '<div class="modeco-empty-state">Sin gastos registrados en el período seleccionado</div>';
     return;
   }
 
-  const total = categorias.reduce((sum, c) => sum + (c.current || 0), 0);
+  const groups = [
+    {
+      title: 'COGS - Costo Directo', classification: 'COGS', categories: [
+        'Compras y Materia Prima - COGS',
+        'Logística Directa de Entrega - COGS',
+        'Mermas / Desperdicio - COGS',
+        'Reparaciones mantenimiento - COGS'
+      ]
+    },
+    {
+      title: 'OPEX - Gastos Operativos', classification: 'OPEX', categories: [
+        'Recursos Humanos - OPEX',
+        'Viajes y Representación - OPEX',
+        'Operaciones y Planta - OPEX',
+        'Desarrollo y Formacion - OPEX',
+        'Administracion y Legales - OPEX',
+        'Tecnología y Software - OPEX',
+        'Marketing y Comercializacion - OPEX'
+      ]
+    },
+    {
+      title: 'CAPEX - Inversión en Activos Fijos', classification: 'CAPEX', categories: [
+        'Maquinaria, Herramientas y Muebles - CAPEX'
+      ]
+    },
+    {
+      title: 'Impuestos e Intereses - Modeco', classification: 'Modeco', categories: [
+        'Impuestos - Modeco',
+        'Intereses y Comisiones Bancarias - Modeco'
+      ]
+    },
+    { title: 'Fondo Misiones - Modeco', classification: 'Modeco', categories: ['Fondo Misiones - Modeco'], standalone: true },
+    { title: 'Depreciación de Activos - Modeco', classification: 'Modeco', categories: ['Depreciacion de Activos - Modeco'], standalone: true },
+    { title: 'Otros Gastos - Modeco', classification: 'Modeco', categories: ['Otros Gastos - Modeco'], standalone: true }
+  ];
+
+  const normalizeName = value => String(value ?? '').normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const sourceByName = new Map(sourceCategories.map(category => [normalizeName(category.name), category]));
+  const configuredNames = new Set(groups.flatMap(group => group.categories).map(normalizeName));
+  const parentHeadings = new Set([
+    'COGS - Costo Directo',
+    'OPEX - Gastos Operativos',
+    'CAPEX - Inversion en Activos Fijos',
+    'CAPEX - Inversión en Activos Fijos',
+    'Impuestos e Intereses - Modeco'
+  ].map(normalizeName));
+  const unmapped = sourceCategories.filter(category =>
+    !configuredNames.has(normalizeName(category.name)) && !parentHeadings.has(normalizeName(category.name)) && category.selectedValue !== 0
+  );
+  if (unmapped.length) {
+    groups.push({ title: 'Sin clasificar', classification: 'Modeco', categories: unmapped.map(category => category.name) });
+  }
+
+  const groupRows = groups.map(group => ({
+    ...group,
+    rows: group.categories.map(name => ({
+      ...(sourceByName.get(normalizeName(name)) || { name, selectedValue: 0, history: [] }),
+      displayName: name
+    }))
+  }));
+  const total = groupRows
+    .flatMap(group => group.rows)
+    .reduce((sum, category) => sum + Math.max(0, category.selectedValue), 0);
+  const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[char]);
 
   container.innerHTML = `
-    <div class="asset-list">
-      ${categorias.map(cat => {
-        const clasif = cat.clasificacion || getModecoClasificacion(cat.name);
-        const color = MODECO_CLASIF_COLORS[clasif] || MODECO_CLASIF_COLORS.Modeco;
-        const pct = total > 0 ? (cat.current / total) * 100 : 0;
-        const badgeClass = clasif.toLowerCase();
-
+    <p class="modeco-groups-note">Cada total principal se calcula con sus subcategorías. Los encabezados principales no se suman como gastos independientes.</p>
+    <div class="modeco-expense-groups">
+      ${groupRows.map(group => {
+        const groupTotal = group.rows.reduce((sum, category) => sum + category.selectedValue, 0);
+        const groupPct = total > 0 ? (groupTotal / total) * 100 : 0;
+        const color = MODECO_CLASIF_COLORS[group.classification] || MODECO_CLASIF_COLORS.Modeco;
+        const badgeClass = group.classification.toLowerCase();
         return `
-          <div class="asset-item">
-            <div class="asset-icon-wrap" style="background:${color}20;color:${color}">
-              ${clasif.charAt(0)}
-            </div>
-            <div class="asset-info">
-              <div class="asset-name">${cat.name}</div>
-              <div class="asset-meta">
-                <span class="classif-badge ${badgeClass}">${clasif}</span>
-                <span style="margin-left:8px;">${pct.toFixed(1)}% del gasto mensual</span>
+          <section class="modeco-expense-group">
+            <div class="modeco-expense-group-header">
+              <div class="modeco-expense-group-title">
+                <h3>${escapeHtml(group.title)}</h3>
+                <span class="classif-badge ${badgeClass}">${group.classification}</span>
               </div>
-              <div class="asset-progress">
-                <div class="asset-progress-fill" style="width:${Math.min(pct, 100)}%;background:${color}"></div>
+              <div class="modeco-expense-group-total">
+                <strong>${fmtMoney(groupTotal)}</strong>
+                <span>${groupPct.toFixed(1)}% del gasto del período</span>
               </div>
             </div>
-            <div class="asset-value">
-              <div class="asset-amount">${fmtMoney(cat.current)}</div>
-              <div class="asset-pct ${cat.change >= 0 ? 'negative' : 'positive'}">${fmtPct(cat.changePct || 0)}</div>
+            <div class="modeco-expense-group-bar"><span style="width:${Math.max(0, Math.min(groupPct, 100))}%;background:${color}"></span></div>
+            <div class="modeco-expense-children">
+              ${group.standalone ? '' : group.rows.map(category => {
+                const pct = total > 0 ? (category.selectedValue / total) * 100 : 0;
+                const previousValue = Number(category.history?.[modecoSelectedMonthIndex + 1]?.value || 0);
+                const changePct = previousValue ? ((category.selectedValue - previousValue) / Math.abs(previousValue)) * 100 : 0;
+                return `
+                  <div class="modeco-expense-child">
+                    <div class="modeco-expense-child-name">${escapeHtml(category.displayName || category.name)}</div>
+                    <div class="modeco-expense-child-share"><strong>${pct.toFixed(1)}%</strong><small>del total</small></div>
+                    <div class="modeco-expense-child-amount">${fmtMoney(category.selectedValue)}</div>
+                    <div class="modeco-expense-child-change ${category.selectedValue - previousValue >= 0 ? 'negative' : 'positive'}">${fmtPct(changePct)}</div>
+                  </div>
+                `;
+              }).join('')}
             </div>
-          </div>
+          </section>
         `;
       }).join('')}
     </div>
@@ -6033,7 +6446,7 @@ async function renderDailySupabase(tipo) {
   const statsId   = isGasto ? 'dailyGastosStats'    : 'dailyIngresosStats';
   const listId    = isGasto ? 'dailyGastosList'     : 'dailyIngresosList';
   const heatmapId = isGasto ? 'dailyGastosHeatmap'  : 'dailyIngresosHeatmap';
-  const selectId  = isGasto ? 'dailyGastosMonth'    : 'dailyIngresosMonth';
+  const selectId  = isGasto ? 'expensesMonthSelect' : 'dailyIngresosMonth';
 
   const statsEl = document.getElementById(statsId);
   const listEl  = document.getElementById(listId);
@@ -6042,9 +6455,9 @@ async function renderDailySupabase(tipo) {
   statsEl.innerHTML = '<div class="stat-card" style="grid-column:1/-1">' +
     '<div class="stat-value" style="font-size:14px;color:#64748b">⏳ Cargando...</div></div>';
 
-  // Poblar selector de mes la primera vez
+  // Ingresos conserva su selector propio; Gastos usa el selector único de la sección.
   const select = document.getElementById(selectId);
-  if (select && select.options.length === 0) {
+  if (!isGasto && select && select.options.length === 0) {
     const now = new Date();
     for (let i = 0; i < 24; i++) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
@@ -6057,12 +6470,18 @@ async function renderDailySupabase(tipo) {
     }
   }
 
-  const selValue = select?.value ||
-    (new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0'));
+  const selValue = isGasto
+    ? (expensesSelectedMonthKey || select?.value)
+    : (select?.value ||
+      (new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0')));
   const [yearStr, monthStr] = selValue.split('-');
 
   try {
     const data = await loadDailySupabase(tipo, yearStr, monthStr);
+    const currentlySelected = isGasto
+      ? expensesSelectedMonthKey
+      : document.getElementById(selectId)?.value;
+    if (currentlySelected && currentlySelected !== selValue) return;
 
     if (!data.dias || data.dias.length === 0) {
       statsEl.innerHTML = '<div class="stat-card" style="grid-column:1/-1">' +
@@ -6241,6 +6660,10 @@ async function renderDailySupabase(tipo) {
     renderHeatmap(heatmapId, data, tipo);
 
   } catch (e) {
+    const currentlySelected = isGasto
+      ? expensesSelectedMonthKey
+      : document.getElementById(selectId)?.value;
+    if (currentlySelected && currentlySelected !== selValue) return;
     console.error('Error cargando ' + tipo + ' de Supabase:', e);
     statsEl.innerHTML = '<div class="stat-card" style="grid-column:1/-1">' +
       '<div class="stat-value" style="font-size:14px;color:#f87171">❌ ' + e.message + '</div></div>';

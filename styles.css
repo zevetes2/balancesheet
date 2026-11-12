@@ -2014,6 +2014,23 @@
 .year-select:focus {
   border-color: #3b82f6;
 }
+.expenses-period-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 16px 0 20px;
+  padding: 12px 14px;
+  background: rgba(15,23,42,0.55);
+  border: 1px solid rgba(51,65,85,0.4);
+  border-radius: 10px;
+}
+.expenses-period-bar label { color: #cbd5e1; font-size: 13px; font-weight: 700; }
+.expenses-period-bar span { color: #94a3b8; font-size: 12px; }
+@media (max-width: 640px) {
+  .expenses-period-bar { align-items: stretch; }
+  .expenses-period-bar select { width: 100%; }
+}
 
 .jarras-cards-grid {
   display: grid;
@@ -2162,6 +2179,117 @@
 }
 
 /* ===== MODECO — BADGES DE CLASIFICACIÓN ===== */
+.modeco-period-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 18px 0 20px;
+  padding: 14px 16px;
+  background: rgba(15, 23, 42, 0.62);
+  border: 1px solid rgba(51, 65, 85, 0.45);
+  border-radius: 12px;
+}
+.modeco-period-bar label { color: #cbd5e1; font-size: 13px; font-weight: 700; }
+.modeco-month-select {
+  min-width: 180px;
+  padding: 9px 12px;
+  color: #f1f5f9;
+  background: #0f172a;
+  border: 1px solid rgba(100, 116, 139, 0.55);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+}
+.modeco-period-bar span { flex: 1 1 260px; color: #94a3b8; font-size: 12px; line-height: 1.5; }
+.modeco-insights {
+  margin: 0 0 20px;
+  padding: 20px;
+  background: linear-gradient(135deg, rgba(15, 41, 37, 0.78), rgba(15, 23, 42, 0.86));
+  border: 1px solid rgba(52, 211, 153, 0.22);
+  border-radius: 14px;
+}
+.modeco-insights-heading { display: grid; grid-template-columns: minmax(180px, 0.7fr) minmax(280px, 1.3fr); gap: 18px; align-items: center; }
+.modeco-insights-eyebrow { color: #6ee7b7; font-size: 10px; font-weight: 800; letter-spacing: 0.12em; }
+.modeco-insights-heading h3 { margin: 5px 0 0; color: #f8fafc; font-size: 20px; }
+.modeco-insights-heading p { margin: 0; color: #d1fae5; font-size: 14px; line-height: 1.6; }
+.modeco-insights-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 18px; }
+.modeco-insight-item { min-width: 0; padding: 13px 14px; background: rgba(15, 23, 42, 0.52); border: 1px solid rgba(148, 163, 184, 0.12); border-radius: 10px; }
+.modeco-insight-item span { display: block; margin-bottom: 6px; color: #94a3b8; font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
+.modeco-insight-item strong { display: block; color: #e2e8f0; font-size: 12px; font-weight: 500; line-height: 1.55; overflow-wrap: anywhere; }
+.modeco-insights-note { margin: 12px 0 0; color: #94a3b8; font-size: 10px; line-height: 1.5; }
+.modeco-groups-note { margin: 0 0 12px; color: #94a3b8; font-size: 11px; line-height: 1.5; }
+.modeco-expense-groups { display: grid; gap: 12px; }
+.modeco-expense-group { padding: 16px 18px 8px; background: rgba(15, 23, 42, 0.48); border: 1px solid rgba(51, 65, 85, 0.38); border-radius: 12px; }
+.modeco-expense-group-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.modeco-expense-group-title { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; min-width: 0; }
+.modeco-expense-group-title h3 { margin: 0; color: #f1f5f9; font-size: 14px; }
+.modeco-expense-group-total { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; white-space: nowrap; }
+.modeco-expense-group-total strong { color: #f8fafc; font-size: 15px; }
+.modeco-expense-group-total span { color: #94a3b8; font-size: 10px; }
+.modeco-expense-group-bar { height: 4px; margin: 12px 0 4px; overflow: hidden; background: rgba(51, 65, 85, 0.48); border-radius: 99px; }
+.modeco-expense-group-bar span { display: block; height: 100%; border-radius: inherit; }
+.modeco-expense-child { display: grid; grid-template-columns: minmax(0, 1fr) 62px minmax(100px, 150px) 68px; align-items: center; gap: 10px; padding: 10px 2px; border-top: 1px solid rgba(71, 85, 105, 0.2); }
+.modeco-expense-child-name { min-width: 0; color: #cbd5e1; font-size: 12px; line-height: 1.4; }
+.modeco-expense-child-share { display: flex; flex-direction: column; color: #94a3b8; font-size: 11px; text-align: right; }
+.modeco-expense-child-share strong { color: #cbd5e1; font-size: 11px; font-weight: 600; }
+.modeco-expense-child-share small { color: #64748b; font-size: 9px; }
+.modeco-expense-child-amount { color: #e2e8f0; font-size: 12px; font-weight: 600; text-align: right; white-space: nowrap; }
+.modeco-expense-child-change { font-size: 10px; text-align: right; white-space: nowrap; }
+.modeco-expense-child-change.negative { color: #f87171; }
+.modeco-expense-child-change.positive { color: #4ade80; }
+.modeco-empty-state {
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+  color: #94a3b8;
+  text-align: center;
+}
+.modeco-chart-card { min-width: 0; }
+.modeco-chart-card .chart-container { min-width: 0; overflow: hidden; }
+.modeco-chart-card .chart-container.is-empty canvas { display: none !important; }
+.modeco-chart-card .chart-container canvas { display: block; width: 100% !important; height: 100% !important; max-width: 100% !important; }
+.modeco-formulas-card {
+  margin: -4px 0 22px;
+  padding: 16px 18px;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(51, 65, 85, 0.45);
+  border-radius: 12px;
+}
+.modeco-formulas-card summary {
+  color: #e2e8f0;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.modeco-formulas-intro { margin: 10px 0 14px; color: #94a3b8; font-size: 12px; }
+.modeco-formula-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.modeco-formula-group { padding: 14px; background: rgba(30, 41, 59, 0.55); border-radius: 10px; }
+.modeco-formula-group h3 { margin: 0 0 12px; color: #cbd5e1; font-size: 13px; }
+.modeco-formula-row { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; padding: 9px 0; border-top: 1px solid rgba(71, 85, 105, 0.3); }
+.modeco-formula-name { color: #e2e8f0; font-size: 12px; font-weight: 600; }
+.modeco-formula-expression { grid-column: 1; color: #94a3b8; font-size: 11px; line-height: 1.5; }
+.modeco-formula-row strong { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: #f8fafc; font-size: 12px; text-align: right; }
+.modeco-formula-row small, .modeco-formula-note { grid-column: 1 / -1; color: #94a3b8; font-size: 11px; line-height: 1.5; }
+.modeco-formula-note { margin: 12px 0 0; }
+@media (max-width: 640px) {
+  .modeco-period-bar { align-items: stretch; }
+  .modeco-month-select { width: 100%; }
+  .modeco-insights { padding: 16px; }
+  .modeco-insights-heading { grid-template-columns: 1fr; gap: 10px; }
+  .modeco-insights-grid { grid-template-columns: 1fr; }
+  .modeco-expense-group { padding: 14px 12px 6px; }
+  .modeco-expense-group-header { align-items: flex-start; }
+  .modeco-expense-group-title { flex-direction: column; align-items: flex-start; }
+  .modeco-expense-group-total strong { font-size: 13px; }
+  .modeco-expense-child { grid-template-columns: minmax(0, 1fr) 46px auto; gap: 6px; }
+  .modeco-expense-child-amount { grid-column: 3; }
+  .modeco-expense-child-change { grid-column: 2 / 4; grid-row: 2; text-align: right; }
+}
+
 .classif-badge {
     display: inline-flex;
     align-items: center;

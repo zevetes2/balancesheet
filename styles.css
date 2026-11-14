@@ -198,6 +198,18 @@
       flex-direction: column;
       gap: 8px;
     }
+    .asset-distribution-card { margin-bottom: 18px; }
+    .asset-change-summary { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; font-size: 11px; line-height: 1.45; }
+    .asset-allocation-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px 24px; }
+    .asset-allocation-item { min-width: 0; }
+    .asset-allocation-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; color: #cbd5e1; font-size: 12px; }
+    .asset-allocation-heading span { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+    .asset-allocation-heading i { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+    .asset-allocation-heading strong { color: #f8fafc; font-size: 12px; }
+    .asset-allocation-track { height: 7px; margin-top: 8px; overflow: hidden; border-radius: 99px; background: rgba(51, 65, 85, 0.55); }
+    .asset-allocation-track div { height: 100%; border-radius: inherit; transition: width 0.4s ease; }
+    .asset-allocation-value { margin-top: 4px; color: #64748b; font-size: 11px; }
+    .asset-allocation-note { margin-top: 15px; padding: 10px 12px; border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 8px; background: rgba(245, 158, 11, 0.07); color: #fbbf24; font-size: 12px; }
     .asset-item {
       display: flex;
       align-items: center;
@@ -569,6 +581,116 @@
     }
     .income-partition-value {
         font-size: 13px;
+    }
+}
+
+/* Detalle desplegable de categoría de gastos */
+.expense-category-toggle {
+    cursor: pointer;
+}
+.expense-category-toggle:focus-visible {
+    outline: 2px solid #60a5fa;
+    outline-offset: 2px;
+}
+.expense-detail-hint {
+    color: #60a5fa;
+    font-size: 0.7rem;
+    white-space: nowrap;
+}
+.expense-category-detail {
+    margin: -10px 0 12px;
+    padding: 14px 16px;
+    background: rgba(15, 23, 42, 0.72);
+    border: 1px solid rgba(51, 65, 85, 0.45);
+    border-radius: 0 0 12px 12px;
+    color: #cbd5e1;
+    animation: fadeIn 0.2s ease;
+}
+.expense-category-detail[hidden] {
+    display: none;
+}
+.expense-detail-loading,
+.expense-detail-empty {
+    padding: 8px 2px;
+    color: #94a3b8;
+    font-size: 0.8rem;
+}
+.expense-detail-summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+.expense-detail-summary strong {
+    color: #f8fafc;
+    font-size: 1rem;
+}
+.expense-detail-summary span {
+    color: #94a3b8;
+    font-size: 0.72rem;
+    text-align: right;
+}
+.expense-detail-days {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin-bottom: 12px;
+}
+.expense-detail-day {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 150px;
+    padding: 7px 9px;
+    border: 1px solid rgba(71, 85, 105, 0.35);
+    border-radius: 8px;
+    background: rgba(30, 41, 59, 0.5);
+    font-size: 0.72rem;
+}
+.expense-detail-day strong {
+    color: #e2e8f0;
+}
+.expense-detail-table-wrap {
+    max-height: 300px;
+    overflow: auto;
+}
+.expense-detail-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.72rem;
+}
+.expense-detail-table th,
+.expense-detail-table td {
+    padding: 8px 9px;
+    border-bottom: 1px solid rgba(71, 85, 105, 0.25);
+    text-align: left;
+    vertical-align: top;
+}
+.expense-detail-table th {
+    position: sticky;
+    top: 0;
+    background: #111827;
+    color: #94a3b8;
+    font-weight: 600;
+}
+.expense-detail-table td small {
+    display: block;
+    margin-top: 3px;
+    color: #64748b;
+}
+.expense-detail-table .expense-detail-amount {
+    color: #f8fafc;
+    font-weight: 600;
+    text-align: right;
+    white-space: nowrap;
+}
+@media (max-width: 640px) {
+    .expense-category-detail {
+        padding: 11px;
+    }
+    .expense-detail-table {
+        min-width: 560px;
     }
 }
 /* ===== RATIOS & KPIs ===== */

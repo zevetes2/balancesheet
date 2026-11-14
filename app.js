@@ -20,6 +20,7 @@
     // ============================================================
     const dailyCache = {}; // { 'gastos_2026_09': data, ... }
     let expensesSelectedMonthKey = '';
+    let incomeSelectedMonthKey = '';
 
     function addMonths(year, month, delta) {
         const d = new Date(year, month - 1 + delta, 1);
@@ -80,11 +81,12 @@
     }
 
     // Construye todas las series necesarias para la proyección de una categoría
-    function buildCategoryProjection(catName, currentBudget) {
-        const now = new Date();
-        const y = now.getFullYear();
-        const m = now.getMonth() + 1;
-        const today = Math.min(now.getDate(), getDaysInMonth(y, m));
+    function buildCategoryProjection(catName, currentBudget, monthKey = getExpenseMonthKey(new Date())) {
+        const [yearPart, monthPart] = monthKey.split('-');
+        const y = Number(yearPart);
+        const m = Number(monthPart);
+        const closed = monthKey < getExpenseMonthKey(new Date());
+        const today = closed ? getDaysInMonth(y, m) : Math.min(new Date().getDate(), getDaysInMonth(y, m));
         const daysInMonth = getDaysInMonth(y, m);
 
         const prev1 = addMonths(y, m, -1);
@@ -148,7 +150,7 @@
             today,
             labels: Array.from({ length: daysInMonth }, (_, i) => String(i + 1)),
             accumulated: accCur.map((v, i) => i < today ? v : null),
-            projected: projected.map((v, i) => i >= today - 1 ? v : null),
+            projected: closed ? null : projected.map((v, i) => i >= today - 1 ? v : null),
             prev1: p1Data?.dias?.length ? accPrev1 : null,
             prev2: p2Data?.dias?.length ? accPrev2 : null,
             avg3mCumulative,
@@ -157,7 +159,8 @@
             avgDaily3m,
             projectionRate,
             hasPrev1: !!p1Data?.dias?.length,
-            hasPrev2: !!p2Data?.dias?.length
+            hasPrev2: !!p2Data?.dias?.length,
+            closed
         };
     }
 
@@ -1059,29 +1062,102 @@ function loadDataJSONP() {
     // === RENDER ASSETS ===
     function renderAssets() {
     const s = appData.summary;
+    const totalAssets = Number(s.activosTotales.current) || 0;
+    const liquid = Number(s.liquidoTotal.current) || 0;
+    const investments = Number(s.inversionesTotal.current) || 0;
+    const otherAssets = Number(s.otrosActivos.current) || 0;
+    const pctOfAssets = value => totalAssets > 0 ? (value / totalAssets) * 100 : 0;
+    const assetHistory = (s.activosTotales.history || []).slice().sort((a, b) =>
+        getExpenseMonthKey(b.isoDate || b.date).localeCompare(getExpenseMonthKey(a.isoDate || a.date))
+    );
+    const currentAssetMonth = assetHistory[0];
+    const previousAssetMonth = assetHistory[1];
+    const monthlyChange = currentAssetMonth && previousAssetMonth
+        ? (Number(currentAssetMonth.value) || 0) - (Number(previousAssetMonth.value) || 0)
+        : null;
+    const monthlyChangePct = monthlyChange !== null && Number(previousAssetMonth.value) !== 0
+        ? (monthlyChange / Math.abs(Number(previousAssetMonth.value))) * 100
+        : null;
+    let annualAssetMonth = null;
+    if (currentAssetMonth) {
+        const [assetYear, assetMonth] = getExpenseMonthKey(currentAssetMonth.isoDate || currentAssetMonth.date).split('-').map(Number);
+        if (assetYear && assetMonth) {
+            const priorYearMonth = addMonths(assetYear, assetMonth, -12);
+            const priorYearKey = `${priorYearMonth.year}-${String(priorYearMonth.month).padStart(2, '0')}`;
+            annualAssetMonth = assetHistory.find(item =>
+                getExpenseMonthKey(item.isoDate || item.date) === priorYearKey
+            ) || null;
+        }
+    }
+    const annualChange = currentAssetMonth && annualAssetMonth
+        ? (Number(currentAssetMonth.value) || 0) - (Number(annualAssetMonth.value) || 0)
+        : null;
+    const annualChangePct = annualChange !== null && Number(annualAssetMonth.value) !== 0
+        ? (annualChange / Math.abs(Number(annualAssetMonth.value))) * 100
+        : null;
+    const currentMonthKey = getExpenseMonthKey(new Date());
+    const closedExpenseMonths = (s.gastosTotal.history || []).filter(item =>
+        getExpenseMonthKey(item.isoDate || item.date) < currentMonthKey
+    ).sort((a, b) =>
+        getExpenseMonthKey(b.isoDate || b.date).localeCompare(getExpenseMonthKey(a.isoDate || a.date))
+    ).slice(0, 3);
+    const averageClosedMonthlyExpense = closedExpenseMonths.length
+        ? closedExpenseMonths.reduce((sum, item) => sum + (Number(item.value) || 0), 0) / closedExpenseMonths.length
+        : 0;
+    const liquidityCoverageMonths = averageClosedMonthlyExpense > 0 ? liquid / averageClosedMonthlyExpense : null;
+    const allocationItems = [
+        { name: 'Líquido disponible', value: liquid, color: '#3b82f6' },
+        { name: 'Inversiones', value: investments, color: '#22c55e' },
+        { name: 'Otros activos', value: otherAssets, color: '#f59e0b' }
+    ];
+    const categorizedAssets = allocationItems.reduce((sum, item) => sum + item.value, 0);
+    const unclassifiedAssets = Math.max(0, totalAssets - categorizedAssets);
+    if (unclassifiedAssets > 0.5) allocationItems.push({
+        name: 'Activos sin desglose', value: unclassifiedAssets, color: '#64748b'
+    });
+    const allocationMismatch = categorizedAssets - totalAssets;
+
     const html = `
         <div class="stat-card">
-        <div class="stat-header"><span class="stat-label">Líquido Total</span></div>
-        <div class="stat-value">${fmtMoney(s.liquidoTotal.current)}</div>
-        <div class="stat-sub">${((s.liquidoTotal.current/s.activosTotales.current)*100).toFixed(1)}% de activos</div>
+        <div class="stat-header"><span class="stat-label">Liquidez Disponible</span></div>
+        <div class="stat-value">${fmtMoney(liquid)}</div>
+        <div class="stat-sub">${pctOfAssets(liquid).toFixed(1)}% de activos · cuentas y efectivo${liquidityCoverageMonths === null ? (closedExpenseMonths.length ? ' · No se calcula cobertura: gasto promedio cero' : ' · Sin historial para calcular cobertura') : ` · Cubre ${liquidityCoverageMonths.toFixed(1)} meses al gasto promedio de ${closedExpenseMonths.length} meses cerrados`}</div>
         </div>
         <div class="stat-card">
         <div class="stat-header"><span class="stat-label">Inversiones</span></div>
-        <div class="stat-value">${fmtMoney(s.inversionesTotal.current)}</div>
-        <div class="stat-sub">${((s.inversionesTotal.current/s.activosTotales.current)*100).toFixed(1)}% de activos</div>
+        <div class="stat-value">${fmtMoney(investments)}</div>
+        <div class="stat-sub">${pctOfAssets(investments).toFixed(1)}% de activos</div>
         </div>
         <div class="stat-card">
         <div class="stat-header"><span class="stat-label">Otros Activos</span></div>
-        <div class="stat-value">${fmtMoney(s.otrosActivos.current)}</div>
-        <div class="stat-sub">Puntos, millas, recompensas</div>
+        <div class="stat-value">${fmtMoney(otherAssets)}</div>
+        <div class="stat-sub">${pctOfAssets(otherAssets).toFixed(1)}% de activos · puntos, millas y recompensas</div>
         </div>
         <div class="stat-card">
         <div class="stat-header"><span class="stat-label">Total Activos</span></div>
-        <div class="stat-value">${fmtMoney(s.activosTotales.current)}</div>
-        <div class="stat-sub">Patrimonio + Pasivos</div>
+        <div class="stat-value">${fmtMoney(totalAssets)}</div>
+        <div class="asset-change-summary">
+            <span style="color:${monthlyChange === null ? '#64748b' : monthlyChange >= 0 ? '#4ade80' : '#f87171'}">Mensual: ${monthlyChange === null ? 'sin dato comparable' : `${monthlyChangePct === null ? '—' : `${monthlyChangePct >= 0 ? '+' : ''}${monthlyChangePct.toFixed(1)}%`} · ${monthlyChange >= 0 ? '+' : '−'}${fmtMoney(Math.abs(monthlyChange))} vs ${formatShortDate(previousAssetMonth.date)}`}</span>
+            <span style="color:${annualChange === null ? '#64748b' : annualChange >= 0 ? '#4ade80' : '#f87171'}">Anual: ${annualChange === null ? 'sin dato comparable' : `${annualChangePct === null ? '—' : `${annualChangePct >= 0 ? '+' : ''}${annualChangePct.toFixed(1)}%`} · ${annualChange >= 0 ? '+' : '−'}${fmtMoney(Math.abs(annualChange))} vs ${formatShortDate(annualAssetMonth.date)}`}</span>
+        </div>
         </div>
     `;
     document.getElementById('assetsStats').innerHTML = html;
+
+    const allocationEl = document.getElementById('assetsDistribution');
+    if (allocationEl) {
+        allocationEl.innerHTML = `
+            <div class="asset-allocation-list">${allocationItems.map(item => {
+                const pct = pctOfAssets(item.value);
+                return `<div class="asset-allocation-item">
+                    <div class="asset-allocation-heading"><span><i style="background:${item.color}"></i>${item.name}</span><strong>${pct.toFixed(1)}%</strong></div>
+                    <div class="asset-allocation-track"><div style="width:${Math.min(100, Math.max(0, pct))}%;background:${item.color}"></div></div>
+                    <div class="asset-allocation-value">${fmtMoney(item.value)}</div>
+                </div>`;
+            }).join('')}</div>
+            ${allocationMismatch > Math.max(1, totalAssets * 0.001) ? `<div class="asset-allocation-note">Las categorías detalladas exceden el total de activos por ${fmtMoney(allocationMismatch)}. Revisa posibles solapamientos en el origen de datos.</div>` : ''}
+        `;
+    }
 
     // Lista de cuentas bancarias
     const bankTotal = Object.values(appData.cuentas).reduce((a, b) => a + b.current, 0);
@@ -1333,157 +1409,105 @@ function loadDataJSONP() {
 
     // === RENDER INCOME ===
     function renderIncome() {
-    const s = appData.summary;
-    const presupuesto = appData.presupuesto || [];
-    const categorias = appData.categorias || [];
-    
-    // IDs separados
-    const activoIds = ['14.1', '14.2', '14.4', '15', '16.1', '16.2', '16.3', '16.4', '17', '18', '19', '20', '21', '22', '24'];
-    const pasivoIds = ['23'];
-    
-    // Limpiar y filtrar
-    const allIngresos = presupuesto.filter(p => p.tipo === 'Ingresos').map(p => ({
-        ...p,
-        cleanId: String(p.id).replace(/^P/i, '')
-    }));
-    
-    const ingresosActivos = allIngresos.filter(p => activoIds.includes(p.cleanId));
-    const ingresosPasivos = allIngresos.filter(p => pasivoIds.includes(p.cleanId));
-    
-    // Totales por grupo
-    const totalPresupuestadoActivo = ingresosActivos.reduce((a, b) => a + (b.montoPresupuestado || 0), 0);
-    const totalRealActivo = ingresosActivos.reduce((a, b) => a + (b.gastoReal || 0), 0);
-    
-    const totalPresupuestadoPasivo = ingresosPasivos.reduce((a, b) => a + (b.montoPresupuestado || 0), 0);
-    const totalRealPasivo = ingresosPasivos.reduce((a, b) => a + (b.gastoReal || 0), 0);
-    
-    const totalReal = totalRealActivo + totalRealPasivo;
-    const totalDiferencia = (totalPresupuestadoActivo + totalPresupuestadoPasivo) - totalReal;
-    const pctIndependencia = totalReal > 0 ? (totalRealPasivo / totalReal) * 100 : 0;
-    
-    // Cards de resumen
-    const html = `
-        <div class="stat-card">
-            <div class="stat-header"><span class="stat-label">Ingreso Activo</span></div>
-            <div class="stat-value" style="color:#3b82f6">${fmtMoney(totalRealActivo)}</div>
-            <div class="stat-sub">${totalPresupuestadoActivo > 0 ? (totalRealActivo/totalPresupuestadoActivo*100).toFixed(1) : 0}% de meta</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-header"><span class="stat-label">Ingreso Pasivo</span></div>
-            <div class="stat-value" style="color:#8b5cf6">${fmtMoney(totalRealPasivo)}</div>
-            <div class="stat-sub">${totalPresupuestadoPasivo > 0 ? (totalRealPasivo/totalPresupuestadoPasivo*100).toFixed(1) : 0}% de meta</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-header"><span class="stat-label">Total Ingresos</span></div>
-            <div class="stat-value" style="color:#4ade80">${fmtMoney(totalReal)}</div>
-            <div class="stat-sub">${fmtMoney(totalDiferencia)} por recibir</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-header"><span class="stat-label">Independencia</span></div>
-            <div class="stat-value" style="color:${pctIndependencia >= 50 ? '#4ade80' : pctIndependencia >= 20 ? '#f59e0b' : '#3b82f6'}">
-                ${pctIndependencia.toFixed(1)}%
-            </div>
-            <div class="stat-sub">ingreso pasivo / total</div>
-        </div>
+    populateIncomeMonthSelector();
+    const selectedLabel = formatExpenseMonth(incomeSelectedMonthKey);
+    if (!gastosData && !incomeDbGastosLoading) {
+        incomeDbGastosLoading = true;
+        loadGastosData().then(() => {
+            incomeDbGastosLoading = false;
+            populateIncomeMonthSelector();
+            renderIncome();
+            if (charts.income) { charts.income.destroy(); delete charts.income; }
+            renderIncomeChart();
+        }).catch(error => {
+            incomeDbGastosLoading = false;
+            console.warn('No se pudo cargar DB_GASTOS para ingresos:', error);
+        });
+    }
+
+    const budgetGroups = getIncomeBudgetRowsByCategory(incomeSelectedMonthKey);
+    const sourceMonth = getDbGastosMonthlyCategoryValues(incomeSelectedMonthKey, 'ingresos');
+    const lineMap = new Map();
+    budgetGroups.forEach(group => {
+        const key = normalizeIncomeCategoryName(group.name);
+        lineMap.set(key, {
+            name: group.name,
+            budget: group.total,
+            actual: group.rows.reduce((sum, row) => sum + (Number(row.gastoReal) || 0), 0),
+            row: group.representativeRow,
+            hasBudget: true
+        });
+    });
+
+    if (sourceMonth) {
+        sourceMonth.categories.forEach(category => {
+            const key = normalizeIncomeCategoryName(category.name);
+            const line = lineMap.get(key) || { name: category.name, budget: null, actual: 0, row: null, hasBudget: false };
+            line.actual = category.value;
+            lineMap.set(key, line);
+        });
+    } else {
+        Object.entries(appData.ingresos || {}).forEach(([name, series]) => {
+            const value = getExpenseHistoryValue(series, incomeSelectedMonthKey);
+            if (value === null) return;
+            const key = normalizeIncomeCategoryName(name);
+            const line = lineMap.get(key) || { name, budget: null, actual: 0, row: null, hasBudget: false };
+            line.actual = value;
+            lineMap.set(key, line);
+        });
+    }
+
+    const passiveNames = new Set(['Inversiones', 'Intereses, dividendos', 'Otros ingresos'].map(normalizeIncomeCategoryName));
+    const passiveIds = new Set(['23']);
+    const incomeLines = [...lineMap.values()].map(line => ({
+        ...line,
+        isPassive: passiveNames.has(normalizeIncomeCategoryName(line.name)) ||
+            passiveIds.has(String(line.row?.id || '').replace(/^P/i, ''))
+    })).sort((a, b) => b.actual - a.actual);
+    const totalReal = sourceMonth
+        ? sourceMonth.total
+        : (incomeLines.length ? incomeLines.reduce((sum, line) => sum + line.actual, 0) :
+            (getExpenseHistoryValue(appData.summary.ingresosNetos, incomeSelectedMonthKey) ?? 0));
+    const totalBudget = budgetGroups.reduce((sum, group) => sum + group.total, 0);
+    const totalRealPassive = incomeLines.filter(line => line.isPassive).reduce((sum, line) => sum + line.actual, 0);
+    const totalRealActive = Math.max(0, totalReal - totalRealPassive);
+    const passivePct = totalReal > 0 ? (totalRealPassive / totalReal) * 100 : 0;
+
+    document.getElementById('incomeStats').innerHTML = `
+        <div class="stat-card"><div class="stat-header"><span class="stat-label">Ingreso Activo · ${selectedLabel}</span></div><div class="stat-value" style="color:#3b82f6">${fmtMoney(totalRealActive)}</div><div class="stat-sub">Fuentes laborales y operativas</div></div>
+        <div class="stat-card"><div class="stat-header"><span class="stat-label">Ingreso Pasivo</span></div><div class="stat-value" style="color:#8b5cf6">${fmtMoney(totalRealPassive)}</div><div class="stat-sub">${passivePct.toFixed(1)}% del ingreso total</div></div>
+        <div class="stat-card"><div class="stat-header"><span class="stat-label">Total Ingresos</span></div><div class="stat-value" style="color:#4ade80">${fmtMoney(totalReal)}</div><div class="stat-sub">${totalBudget > 0 ? `${fmtMoney(Math.max(0, totalBudget - totalReal))} por recibir de la meta` : sourceMonth ? 'Cierre mensual desde DB_GASTOS' : 'Sin meta presupuestaria para este mes'}</div></div>
+        <div class="stat-card"><div class="stat-header"><span class="stat-label">Meta Mensual</span></div><div class="stat-value">${totalBudget > 0 ? fmtMoney(totalBudget) : '—'}</div><div class="stat-sub">${totalBudget > 0 ? `${(totalReal / totalBudget * 100).toFixed(1)}% alcanzado` : 'Sin presupuesto registrado'}</div></div>
     `;
-    document.getElementById('incomeStats').innerHTML = html;
-    
-    // Función para renderizar un item
-    const renderItem = (p, isPasivo, grupoTotal) => {
-        const categoria = categorias.find(c => String(c.id).trim() === String(p.idCategoria).trim());
-        const nombre = (categoria && categoria.nombre) ? categoria.nombre : 
-                       (categoria && categoria.etiqueta) ? categoria.etiqueta : 
-                       'Categoría ' + p.id;
-        
-        const presupuestoVal = p.montoPresupuestado || 0;
-        const realVal = p.gastoReal || 0;
-        const faltante = presupuestoVal - realVal;
-        const pct = presupuestoVal > 0 ? (realVal / presupuestoVal) * 100 : 0;
-        
-        // % que representa esta categoría del total de su grupo
-        const pctDelGrupo = grupoTotal > 0 ? (realVal / grupoTotal) * 100 : 0;
-        
-        const color = isPasivo ? '#8b5cf6' : (pct >= 100 ? '#10b981' : pct >= 80 ? '#3b82f6' : '#f59e0b');
-        const icon = isPasivo ? '📈' : (pct >= 100 ? '✅' : pct >= 80 ? '💵' : '⏳');
-        
-        // Barra: lleno = % alcanzado, gris = % faltante
-        const barWidth = Math.min(pct, 100);
-        const remainingWidth = 100 - barWidth;
-        
-        // Texto de expectativa
-        const expectativaText = faltante > 0 
-            ? `Falta ${fmtMoney(faltante)} para meta` 
-            : (faltante < 0 ? `Excedido en ${fmtMoney(Math.abs(faltante))}` : 'Meta alcanzada');
-        
-        const hasPartition = p.particion && ((p.gastoAnthony || 0) > 0 || (p.gastoEmely || 0) > 0 || (p.presupuestoAnthony || 0) > 0 || (p.presupuestoEmely || 0) > 0);
-        
+
+    const html = incomeLines.map((line, index) => {
+        const hasBudget = line.hasBudget && line.budget > 0;
+        const pct = hasBudget ? (line.actual / line.budget) * 100 : null;
+        const color = line.isPassive ? '#8b5cf6' : '#22c55e';
+        const chartId = `incomeProjChart_${index}`;
+        const detailId = `incomeCategoryDetail_${index}`;
+        const safeName = escapeExpenseHtml(line.name);
         return `
-            <div class="income-card" style="border-left: 3px solid ${color}">
-                <div class="income-icon" style="background:${color}20;color:${color}">${icon}</div>
+            <div class="income-card expense-category-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="${detailId}"
+                 onclick="toggleIncomeCategoryDetail(${index})"
+                 onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleIncomeCategoryDetail(${index})}"
+                 style="border-left:3px solid ${color}">
+                <div class="income-icon" style="background:${color}20;color:${color}">${line.isPassive ? '📈' : '💵'}</div>
                 <div class="income-main">
-                    <div class="income-header">
-                        <div class="income-name">${nombre}</div>
-                        <div style="text-align:right">
-                            <div class="income-pct" style="color:${color}">${pct.toFixed(1)}%</div>
-                            <div style="font-size:0.7rem;color:#64748b">${pctDelGrupo.toFixed(1)}% del ${isPasivo ? 'pasivo' : 'activo'}</div>
-                        </div>
-                    </div>
-                    <div class="income-meta">
-                        ${fmtMoney(realVal)} / ${fmtMoney(presupuestoVal)} · ${expectativaText} · ${p.diasRestantes || 0} días
-                    </div>
-                    <div class="income-bar-track">
-                        <div style="width:${barWidth}%;height:100%;background:${color};transition:width 0.3s ease;"></div>
-                        <div style="width:${remainingWidth}%;height:100%;background:rgba(51,65,85,0.3);"></div>
-                    </div>
+                    <div class="income-header"><div class="income-name">${safeName}</div><div style="display:flex;align-items:center;gap:10px"><span class="expense-detail-hint">Ver detalle⌄</span><div class="income-pct" style="color:${color}">${pct === null ? '—' : `${pct.toFixed(1)}%`}</div></div></div>
+                    <div class="income-meta">${hasBudget ? `${fmtMoney(line.actual)} / ${fmtMoney(line.budget)} · ${Math.max(0, line.budget - line.actual) > 0 ? `${fmtMoney(line.budget - line.actual)} para alcanzar la meta` : 'Meta alcanzada'}` : `${fmtMoney(line.actual)} · sin meta asignada`}</div>
+                    ${hasBudget ? `<div class="income-bar-track"><div style="width:${Math.min(pct, 100)}%;height:100%;background:${color}"></div><div style="width:${Math.max(0, 100 - Math.min(pct, 100))}%;height:100%;background:rgba(51,65,85,0.3)"></div></div>` : ''}
                 </div>
             </div>
-            ${hasPartition ? `
-            <div class="income-partition">
-                <div class="income-partition-col">
-                    <div class="income-partition-label" style="color:#3b82f6">Anthony</div>
-                    <div class="income-partition-value">${fmtMoney(p.gastoAnthony || 0)}</div>
-                    <div class="income-partition-sub" style="color:${(p.restanteAnthony || 0) >= 0 ? '#3b82f6' : '#f87171'}">${fmtMoney(p.restanteAnthony || 0)} rest.</div>
-                </div>
-                <div class="income-partition-col center">
-                    <div class="income-partition-label" style="color:#22c55e">Por Recibir</div>
-                    <div class="income-partition-value">${fmtMoney(p.diferencia || 0)}</div>
-                    <div class="income-partition-sub" style="color:${(p.diferencia || 0) >= 0 ? '#22c55e' : '#f87171'}">${(p.diferencia || 0) >= 0 ? 'Pendiente' : 'Excedido'}</div>
-                </div>
-                <div class="income-partition-col">
-                    <div class="income-partition-label" style="color:#ec4899">Emely</div>
-                    <div class="income-partition-value">${fmtMoney(p.gastoEmely || 0)}</div>
-                    <div class="income-partition-sub" style="color:${(p.restanteEmely || 0) >= 0 ? '#ec4899' : '#f87171'}">${fmtMoney(p.restanteEmely || 0)} rest.</div>
-                </div>
-            </div>
-            ` : ''}
+            <div class="expense-category-detail" id="${detailId}" hidden></div>
+            ${(line.actual > 0 || hasBudget) ? `<div class="expense-projection" data-proj-chart-id="${chartId}" style="display:none;padding:14px 16px;background:rgba(15,23,42,0.55);border:1px solid rgba(51,65,85,0.2);border-top:none;border-radius:0 0 12px 12px;margin-top:-10px;margin-bottom:10px;"><div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px;">📊 Comparación mensual · ${safeName}</div><div class="chart-container" id="${chartId}" style="height:240px;"></div></div>` : ''}
         `;
-    };
-    
-    // Renderizar activos
-    const activosList = ingresosActivos
-        .sort((a, b) => (b.gastoReal || 0) - (a.gastoReal || 0))
-        .map(p => renderItem(p, false, totalRealActivo))
-        .join('');
-    
-    // Renderizar pasivos
-    const pasivosList = ingresosPasivos
-        .sort((a, b) => (b.gastoReal || 0) - (a.gastoReal || 0))
-        .map(p => renderItem(p, true, totalRealPasivo))
-        .join('');
-    
-    const fullList = `
-        ${activosList}
-        ${pasivosList.length > 0 ? `
-        <div style="padding:16px 8px 8px 8px;color:#8b5cf6;font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;display:flex;align-items:center;gap:8px;">
-            <span style="width:24px;height:2px;background:#8b5cf6;border-radius:1px;"></span>
-            Ingresos Pasivos · ${fmtMoney(totalRealPasivo)} total
-        </div>
-        ${pasivosList}
-        ` : ''}
-    `;
-    
-    document.getElementById('incomeCategoriesList').innerHTML = 
-        fullList ? `<div class="asset-list">${fullList}</div>` : '<div style="color:#64748b;padding:20px;text-align:center;">No hay ingresos registrados.</div>';
+    }).join('');
+    const container = document.getElementById('incomeCategoriesList');
+    container.innerHTML = incomeLines.length
+        ? `<div class="asset-list">${html}</div>`
+        : '<div class="modeco-empty-state">No hay ingresos ni categorías para este mes.</div>';
+    setTimeout(() => loadIncomeCategoryComparisons(incomeLines, incomeSelectedMonthKey), 50);
 }
 
 
@@ -1528,6 +1552,94 @@ function loadDataJSONP() {
         return label.charAt(0).toUpperCase() + label.slice(1);
     }
 
+    function getExpenseHistoryValue(series, monthKey) {
+        if (!series?.history) return null;
+        const item = series.history.find(entry =>
+            getExpenseMonthKey(entry.isoDate || entry.date) === monthKey
+        );
+        return item ? (Number(item.value) || 0) : null;
+    }
+
+    function normalizeExpenseCategoryName(value) {
+        return String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase().replace(/\s+/g, ' ').trim();
+    }
+
+    const DB_GASTOS_PRIMARY_CATEGORIES = [
+        'Comida', 'Compras', 'Transporte', 'Servicios', 'Gastos financieros',
+        'Otros', 'Donativos', 'Educacion', 'Entretenimiento', 'Ahorros', 'Inversión'
+    ];
+    const DB_GASTOS_PRIMARY_INCOME_CATEGORIES = [
+        'Trabajo', 'Clases de Música', 'Eventos', 'Iglesias', 'Developer',
+        'Cheques, cupones', 'Regalos', 'Puntos', 'Intereses, dividendos', 'Inversiones', 'Otros ingresos'
+    ];
+
+    function normalizeIncomeCategoryName(value) {
+        const key = normalizeExpenseCategoryName(value);
+        if (key === 'investment') return normalizeExpenseCategoryName('Inversiones');
+        const direct = DB_GASTOS_PRIMARY_INCOME_CATEGORIES.find(name => normalizeExpenseCategoryName(name) === key);
+        if (direct) return normalizeExpenseCategoryName(direct);
+        const mapped = normalizeExpenseCategoryName(getCatMeta(value).etiqueta);
+        if (mapped === 'investment') return normalizeExpenseCategoryName('Inversiones');
+        const byLabel = DB_GASTOS_PRIMARY_INCOME_CATEGORIES.find(name => normalizeExpenseCategoryName(name) === mapped);
+        return normalizeExpenseCategoryName(byLabel || value);
+    }
+
+    function getIncomeBudgetRowsByCategory(monthKey) {
+        const categoriesById = new Map((appData?.categorias || []).map(category => [
+            String(category.id).trim(), category
+        ]));
+        const groups = new Map();
+        (appData?.presupuesto || []).filter(row =>
+            row.tipo === 'Ingresos' && getExpenseMonthKey(row.mesAno) === monthKey
+        ).forEach(row => {
+            const category = categoriesById.get(String(row.idCategoria).trim());
+            const rawName = category?.etiqueta || category?.nombre || `Categoría ${row.idCategoria}`;
+            const canonicalName = DB_GASTOS_PRIMARY_INCOME_CATEGORIES.find(name =>
+                normalizeExpenseCategoryName(name) === normalizeIncomeCategoryName(rawName)
+            ) || rawName;
+            const key = normalizeIncomeCategoryName(canonicalName);
+            if (!groups.has(key)) groups.set(key, { name: canonicalName, rows: [] });
+            groups.get(key).rows.push({ row, category });
+        });
+
+        return [...groups.values()].map(group => {
+            const primaryRows = group.rows.filter(item => !item.category?.padre);
+            const keepAllRows = normalizeIncomeCategoryName(group.name) === normalizeIncomeCategoryName('Inversiones');
+            const selectedRows = keepAllRows || primaryRows.length === 0
+                ? group.rows
+                : primaryRows;
+            return {
+                name: group.name,
+                rows: selectedRows.map(item => item.row),
+                total: selectedRows.reduce((sum, item) => sum + (Number(item.row.montoPresupuestado) || 0), 0),
+                representativeRow: selectedRows[0]?.row || null
+            };
+        });
+    }
+
+    function getDbGastosMonthlyCategoryValues(monthKey, kind = 'gastos') {
+        const monthData = (gastosData?.meses || []).find(month =>
+            getExpenseMonthKey(month.isoDate || month.mes) === monthKey
+        );
+        if (!monthData?.valores) return null;
+        const categoryNames = kind === 'ingresos'
+            ? DB_GASTOS_PRIMARY_INCOME_CATEGORIES
+            : DB_GASTOS_PRIMARY_CATEGORIES;
+        const valuesByName = new Map(Object.entries(monthData.valores).map(([name, value]) => [
+            normalizeExpenseCategoryName(name), Number(value) || 0
+        ]));
+        const categories = categoryNames.map(name => ({
+            name,
+            value: valuesByName.get(normalizeExpenseCategoryName(name)) ?? 0
+        }));
+        return { total: categories.reduce((sum, category) => sum + category.value, 0), categories };
+    }
+
+    function getDbGastosMonthlyTotals(monthKey) {
+        return getDbGastosMonthlyCategoryValues(monthKey, 'gastos');
+    }
+
     function getExpenseMonthKeys() {
         const keys = new Set();
         const add = value => {
@@ -1539,6 +1651,7 @@ function loadDataJSONP() {
         Object.values(appData?.gastos || {}).forEach(category =>
             (category.history || []).forEach(item => add(item.isoDate || item.date))
         );
+        (gastosData?.meses || []).forEach(month => add(month.isoDate || month.mes));
 
         // Permitir consultar también meses recientes aunque aún no tengan presupuesto cargado.
         const now = new Date();
@@ -1566,6 +1679,53 @@ function loadDataJSONP() {
             option.selected = key === expensesSelectedMonthKey;
             select.appendChild(option);
         });
+    }
+
+    function getIncomeMonthKeys() {
+        const keys = new Set();
+        const add = value => {
+            const key = getExpenseMonthKey(value);
+            if (key) keys.add(key);
+        };
+        (appData?.presupuesto || []).filter(row => row.tipo === 'Ingresos').forEach(row => add(row.mesAno));
+        (appData?.summary?.ingresosNetos?.history || []).forEach(item => add(item.isoDate || item.date));
+        Object.values(appData?.ingresos || {}).forEach(category =>
+            (category.history || []).forEach(item => add(item.isoDate || item.date))
+        );
+        (gastosData?.meses || []).forEach(month => add(month.isoDate || month.mes));
+        const now = new Date();
+        for (let offset = 0; offset < 24; offset++) {
+            const date = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+            keys.add(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
+        }
+        return [...keys].sort((a, b) => b.localeCompare(a));
+    }
+
+    function populateIncomeMonthSelector() {
+        const select = document.getElementById('incomeMonthSelect');
+        if (!select) return;
+        const monthKeys = getIncomeMonthKeys();
+        const currentKey = getExpenseMonthKey(new Date());
+        if (!monthKeys.includes(incomeSelectedMonthKey)) {
+            incomeSelectedMonthKey = monthKeys.includes(currentKey) ? currentKey : (monthKeys[0] || '');
+        }
+        select.replaceChildren();
+        monthKeys.forEach(key => {
+            const option = document.createElement('option');
+            option.value = key;
+            option.textContent = formatExpenseMonth(key);
+            option.selected = key === incomeSelectedMonthKey;
+            select.appendChild(option);
+        });
+    }
+
+    function onIncomeMonthChange(monthKey) {
+        if (!/^\d{4}-\d{2}$/.test(monthKey)) return;
+        incomeSelectedMonthKey = monthKey;
+        renderIncome();
+        renderDailySupabase('ingresos');
+        if (charts.income) { charts.income.destroy(); delete charts.income; }
+        renderIncomeChart();
     }
 
     function onExpensesMonthChange(monthKey) {
@@ -1596,32 +1756,61 @@ function loadDataJSONP() {
     const categorias = appData.categorias || [];
     const selectedMonthLabel = formatExpenseMonth(expensesSelectedMonthKey);
     const selectedMonthIsCurrent = expensesSelectedMonthKey === getExpenseMonthKey(new Date());
+    const isClosedMonth = expensesSelectedMonthKey < getExpenseMonthKey(new Date());
+
+    if (!gastosData && !expenseDbGastosLoading) {
+        expenseDbGastosLoading = true;
+        loadGastosData().then(() => {
+            expenseDbGastosLoading = false;
+            if (expensesSelectedMonthKey) {
+                populateExpensesMonthSelector();
+                renderExpenses();
+                renderExpensesPieChart();
+            }
+        }).catch(error => {
+            expenseDbGastosLoading = false;
+            console.warn('No se pudo cargar DB_GASTOS para el cierre mensual:', error);
+        });
+    }
 
     // Mostrar solo las líneas de presupuesto del mes elegido; nunca mezclar meses como respaldo.
     const gastosMostrar = presupuesto.filter(p =>
         p.tipo === 'Gastos' && getExpenseMonthKey(p.mesAno) === expensesSelectedMonthKey
     );
-    const hasBudgetForMonth = gastosMostrar.length > 0;
-    
-    // Totales
-    const totalPresupuestado = gastosMostrar.reduce((a, b) => a + b.montoPresupuestado, 0);
-    const totalReal = gastosMostrar.reduce((a, b) => a + b.gastoReal, 0);
-    const totalDiferencia = totalPresupuestado - totalReal;
-    const pctConsumido = totalPresupuestado > 0 ? (totalReal / totalPresupuestado) * 100 : 0;
+    const historicalBudget = getExpenseHistoryValue(appData.summary.presupuesto, expensesSelectedMonthKey);
+    const historicalActual = getExpenseHistoryValue(appData.summary.gastosTotal, expensesSelectedMonthKey);
+    const dbGastosTotals = getDbGastosMonthlyTotals(expensesSelectedMonthKey);
+    const hasActualForMonth = (isClosedMonth && dbGastosTotals !== null) || gastosMostrar.length > 0 || historicalActual !== null;
+
+    // Si DB_PRESUPUESTO no tiene filas históricas, usar las series mensuales del balance.
+    const totalPresupuestado = gastosMostrar.length
+        ? gastosMostrar.reduce((sum, row) => sum + (Number(row.montoPresupuestado) || 0), 0)
+        : (historicalBudget ?? 0);
+    const totalReal = gastosMostrar.length
+        ? gastosMostrar.reduce((sum, row) => sum + (Number(row.gastoReal) || 0), 0)
+        : (historicalActual ?? 0);
+    const finalizedExpenseTotal = isClosedMonth && dbGastosTotals !== null
+        ? dbGastosTotals.total
+        : totalReal;
+    const hasBudgetForMonth = isClosedMonth ? hasActualForMonth : (gastosMostrar.length > 0 || (historicalBudget !== null && historicalBudget > 0));
+    const displayedActual = isClosedMonth ? finalizedExpenseTotal : totalReal;
+    const budgetReference = isClosedMonth ? finalizedExpenseTotal : totalPresupuestado;
+    const totalDiferencia = budgetReference - displayedActual;
+    const pctConsumido = budgetReference > 0 ? (displayedActual / budgetReference) * 100 : 0;
     const enRiesgo = gastosMostrar.filter(p => p.mensaje && p.mensaje.includes('Riesgo')).length;
     const excedidos = gastosMostrar.filter(p => p.mensaje && p.mensaje.includes('sobrepasado')).length;
     
     // Cards de resumen
     const html = `
         <div class="stat-card">
-            <div class="stat-header"><span class="stat-label">Presupuesto · ${selectedMonthLabel}</span></div>
-            <div class="stat-value">${hasBudgetForMonth ? fmtMoney(totalPresupuestado) : '—'}</div>
-            <div class="stat-sub">${hasBudgetForMonth ? `${pctConsumido.toFixed(1)}% consumido` : 'Sin presupuesto registrado para este mes'}</div>
+            <div class="stat-header"><span class="stat-label">${isClosedMonth ? 'Gasto final ·' : 'Presupuesto ·'} ${selectedMonthLabel}</span></div>
+            <div id="expensesBudgetValue" class="stat-value">${hasBudgetForMonth ? fmtMoney(budgetReference) : '—'}</div>
+            <div id="expensesBudgetSub" class="stat-sub">${!hasBudgetForMonth ? (isClosedMonth ? 'Sin gasto registrado para este mes' : 'Sin presupuesto registrado para este mes') : isClosedMonth ? 'Mes cerrado · referencia igual al gasto final' : hasActualForMonth ? `${pctConsumido.toFixed(1)}% consumido` : 'Sin gastos registrados para este mes'}</div>
         </div>
         <div class="stat-card">
             <div class="stat-header"><span class="stat-label">Gasto Real · ${selectedMonthLabel}</span></div>
-            <div class="stat-value" style="color:${hasBudgetForMonth ? (pctConsumido > 100 ? '#f87171' : pctConsumido > 80 ? '#f59e0b' : '#4ade80') : '#94a3b8'}">${hasBudgetForMonth ? fmtMoney(totalReal) : '—'}</div>
-            <div class="stat-sub">${hasBudgetForMonth ? `${fmtMoney(Math.abs(totalDiferencia))} ${totalDiferencia >= 0 ? 'restante' : 'excedido'}` : 'Sin datos presupuestarios para este mes'}</div>
+            <div id="expensesActualValue" class="stat-value" style="color:${hasBudgetForMonth && hasActualForMonth ? (pctConsumido > 100 ? '#f87171' : pctConsumido > 80 ? '#f59e0b' : '#4ade80') : hasActualForMonth ? '#e2e8f0' : '#94a3b8'}">${hasActualForMonth ? fmtMoney(displayedActual) : '—'}</div>
+            <div id="expensesActualSub" class="stat-sub">${hasBudgetForMonth && hasActualForMonth ? (isClosedMonth ? 'Total final según DB_Gastos · 11 categorías principales' : `${fmtMoney(Math.abs(totalDiferencia))} ${totalDiferencia >= 0 ? 'restante' : 'excedido'}`) : (hasActualForMonth ? 'Gasto histórico del balance' : 'Esperando datos del mes seleccionado')}</div>
         </div>
         <div class="stat-card">
             <div class="stat-header"><span class="stat-label">En Riesgo</span></div>
@@ -1638,42 +1827,86 @@ function loadDataJSONP() {
     
     // Lista de categorías
     clearExpenseProjectionCharts();
-    const expenseList = [...gastosMostrar]
-    .sort((a, b) => b.gastoReal - a.gastoReal)
-    .map((p, idx) => {   // ← NUEVO: recibimos idx
-        const categoria = categorias.find(c => c.id == p.idCategoria);
-        const nombre = categoria ? categoria.etiqueta : 'Categoría ' + p.idCategoria;
-        const pct = p.montoPresupuestado > 0 ? (p.gastoReal / p.montoPresupuestado) * 100 : 0;
-        const color = pct > 100 ? '#ef4444' : pct > 80 ? '#f59e0b' : '#22c55e';
-        const icon = pct > 100 ? '⚠️' : pct > 80 ? '⚡' : '✅';
+    const categoriaPorId = new Map(categorias.map(category => [String(category.id), category]));
+    const linesByCategory = new Map();
+    gastosMostrar.forEach(row => {
+        const category = categoriaPorId.get(String(row.idCategoria));
+        const name = category?.etiqueta || `Categoría ${row.idCategoria}`;
+        const key = normalizeExpenseCategoryName(name);
+        linesByCategory.set(key, { name, budgetRow: row, historyValue: null });
+    });
+    Object.entries(appData.gastos || {}).forEach(([name, series]) => {
+        const value = getExpenseHistoryValue(series, expensesSelectedMonthKey);
+        if (value === null || value === 0) return;
+        const key = normalizeExpenseCategoryName(name);
+        const existing = linesByCategory.get(key);
+        if (existing) existing.historyValue = value;
+        else linesByCategory.set(key, { name, budgetRow: null, historyValue: value });
+    });
+    if (isClosedMonth && dbGastosTotals) {
+        dbGastosTotals.categories.forEach(category => {
+            const key = normalizeExpenseCategoryName(category.name);
+            const existing = linesByCategory.get(key);
+            if (existing) existing.historyValue = category.value;
+            else linesByCategory.set(key, { name: category.name, budgetRow: null, historyValue: category.value });
+        });
+    }
 
-        const anthonyPct = p.montoPresupuestado > 0 ? (p.gastoAnthony / p.montoPresupuestado) * 100 : 0;
-        const emelyPct = p.montoPresupuestado > 0 ? (p.gastoEmely / p.montoPresupuestado) * 100 : 0;
-        const remainingPct = Math.max(0, 100 - anthonyPct - emelyPct);
+    const expenseLines = [...linesByCategory.values()].map(line => {
+        const row = line.budgetRow;
+        return {
+            ...row,
+            name: line.name,
+            gastoReal: line.historyValue !== null ? line.historyValue : (Number(row?.gastoReal) || 0),
+            hasCategoryBudget: isClosedMonth ? ((line.historyValue ?? Number(row?.gastoReal) ?? 0) > 0) : !!row,
+            montoPresupuestado: isClosedMonth
+                ? (line.historyValue !== null ? line.historyValue : (Number(row?.gastoReal) || 0))
+                : (row ? (Number(row.montoPresupuestado) || 0) : null),
+            gastoAnthony: Number(row?.gastoAnthony) || 0,
+            gastoEmely: Number(row?.gastoEmely) || 0,
+            particion: row?.particion || ''
+        };
+    }).sort((a, b) => b.gastoReal - a.gastoReal);
+
+    const expenseList = expenseLines.map((p, idx) => {
+        const hasCategoryBudget = p.hasCategoryBudget && p.montoPresupuestado > 0;
+        const pct = hasCategoryBudget ? (p.gastoReal / p.montoPresupuestado) * 100 : 0;
+        const color = !hasCategoryBudget ? '#64748b' : pct > 100 ? '#ef4444' : pct > 80 ? '#f59e0b' : '#22c55e';
+        const icon = !hasCategoryBudget ? '•' : pct > 100 ? '⚠️' : pct > 80 ? '⚡' : '✅';
+
+        const anthonyPct = hasCategoryBudget ? (p.gastoAnthony / p.montoPresupuestado) * 100 : 0;
+        const emelyPct = hasCategoryBudget ? (p.gastoEmely / p.montoPresupuestado) * 100 : 0;
+        const remainingPct = hasCategoryBudget ? Math.max(0, 100 - anthonyPct - emelyPct) : 0;
 
         const chartId = `expenseProjChart_${idx}`;
-        const monthInfo = selectedMonthIsCurrent
-          ? `${p.diasRestantes} días restantes · ${fmtMoney(p.recomendacionDiaria)}/día`
-          : `${fmtMoney(Math.max(0, p.montoPresupuestado - p.gastoReal))} disponibles al cierre`;
+        const monthInfo = !hasCategoryBudget
+          ? 'Sin presupuesto para esta categoría'
+          : selectedMonthIsCurrent
+            ? `${p.diasRestantes} días restantes · ${fmtMoney(p.recomendacionDiaria)}/día`
+            : 'Mes cerrado · gasto final usado como referencia';
 
         return `
-            <div class="expense-card" style="border-left: 3px solid ${color}">
+            <div class="expense-card expense-category-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="expenseCategoryDetail_${idx}"
+                 onclick="toggleExpenseCategoryDetail(${idx})"
+                 onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleExpenseCategoryDetail(${idx})}"
+                 style="border-left: 3px solid ${color}">
                 <div class="expense-icon" style="background:${color}20;color:${color}">${icon}</div>
                 <div class="expense-main">
                     <div class="expense-header">
-                        <div class="expense-name">${nombre}</div>
-                        <div class="expense-pct" style="color:${color}">${pct.toFixed(1)}%</div>
+                        <div class="expense-name">${p.name}</div>
+                        <div style="display:flex;align-items:center;gap:10px"><span class="expense-detail-hint">Ver detalle⌄</span><div class="expense-pct" style="color:${color}">${hasCategoryBudget ? `${pct.toFixed(1)}%` : '—'}</div></div>
                     </div>
                     <div class="expense-meta">
-                        ${fmtMoney(p.gastoReal)} / ${fmtMoney(p.montoPresupuestado)} · ${monthInfo}
+                        ${hasCategoryBudget ? `${fmtMoney(p.gastoReal)} / ${fmtMoney(p.montoPresupuestado)}` : `${fmtMoney(p.gastoReal)} · sin presupuesto`} · ${monthInfo}
                     </div>
-                    <div class="expense-bar-track">
+                    ${hasCategoryBudget ? `<div class="expense-bar-track">
                         <div class="expense-bar-anthony" style="width:${anthonyPct}%"></div>
                         <div class="expense-bar-emely" style="width:${emelyPct}%"></div>
                         <div class="expense-bar-remaining" style="width:${remainingPct}%"></div>
-                    </div>
+                    </div>` : ''}
                 </div>
             </div>
+            <div class="expense-category-detail" id="expenseCategoryDetail_${idx}" hidden></div>
             ${p.particion ? `
             <div class="expense-partition">
                 <div class="expense-partition-col">
@@ -1694,25 +1927,25 @@ function loadDataJSONP() {
             </div>
             ` : ''}
             <!-- ← NUEVO: contenedor de proyección -->
-            ${selectedMonthIsCurrent ? `<div class="expense-projection" data-proj-chart-id="${chartId}"
+            ${(selectedMonthIsCurrent && hasCategoryBudget || isClosedMonth && p.gastoReal > 0) ? `<div class="expense-projection" data-proj-chart-id="${chartId}"
                  style="display:none;padding:14px 16px;background:rgba(15,23,42,0.55);
                         border:1px solid rgba(51,65,85,0.2);border-top:none;
                         border-radius:0 0 12px 12px;margin-top:-10px;margin-bottom:10px;">
                 <div style="font-size:11px;font-weight:700;color:#64748b;
                             text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px;">
-                    📈 Proyección del mes · ${nombre}
+                    📊 Comparación mensual · ${p.name}
                 </div>
                 <div class="chart-container" id="${chartId}" style="height:240px;"></div>
             </div>` : ''}
         `;
     }).join('');
     
-    document.getElementById('expenseCategoriesList').innerHTML = hasBudgetForMonth
+    document.getElementById('expenseCategoriesList').innerHTML = expenseLines.length
         ? `<div class="asset-list">${expenseList}</div>`
-        : '<div class="modeco-empty-state">No hay categorías presupuestadas para este mes. El detalle diario sigue mostrando las transacciones disponibles.</div>';
+        : '<div class="modeco-empty-state">No hay gastos ni categorías para este mes. El detalle diario muestra las transacciones disponibles cuando existan.</div>';
     // ← NUEVO: dispara la carga async de proyecciones
-    if (selectedMonthIsCurrent && gastosMostrar.length) {
-        setTimeout(() => loadExpenseProjections(gastosMostrar), 50);
+    if (expenseLines.length) {
+        setTimeout(() => loadExpenseProjections(expenseLines, expensesSelectedMonthKey), 50);
     }
 }
 
@@ -2065,6 +2298,8 @@ function renderRatiosRadarChart() {
         } else if (tab === 'assets') {
             if (!charts.liquido) renderLiquidoChart();
             if (!charts.inversiones) renderInversionesChart();
+            if (!charts.assetsYearlyChange) renderAssetsYearlyChangeChart();
+            if (!charts.assetsCurrentYearChange) renderAssetsCurrentYearChangeChart();
         } else if (tab === 'liabilities') {
             if (!charts.liabilities) renderLiabilitiesChart();
         } else if (tab === 'income') {
@@ -2213,6 +2448,125 @@ function renderRatiosRadarChart() {
         }
         }]
     });
+    }
+
+    function getAssetsChangeHistory() {
+        return (appData.summary.activosTotales.history || []).map(item => ({
+            monthKey: getExpenseMonthKey(item.isoDate || item.date),
+            date: item.date,
+            value: Number(item.value) || 0
+        })).filter(item => item.monthKey).sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+    }
+
+    function buildAssetsChangePoints(currentEntries, previousEntryByKey) {
+        return currentEntries.map(item => {
+            const previous = previousEntryByKey(item.previousKey);
+            if (!previous || Number(previous.value) === 0) {
+                return { label: item.label, pct: null, delta: null, comparisonLabel: item.comparisonLabel };
+            }
+            const delta = item.value - Number(previous.value);
+            return {
+                label: item.label,
+                pct: (delta / Math.abs(Number(previous.value))) * 100,
+                delta,
+                comparisonLabel: item.comparisonLabel
+            };
+        });
+    }
+
+    function renderAssetsChangeBarChart(containerId, points, seriesLabel, emptyMessage) {
+        const container = document.getElementById(containerId);
+        if (!container) return null;
+        if (!points.length || points.every(point => point.pct === null)) {
+            container.innerHTML = `<div class="modeco-empty-state">${emptyMessage}</div>`;
+            return null;
+        }
+        const ctx = getCanvas(containerId);
+        if (!ctx) return null;
+        return new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: points.map(point => point.label),
+                datasets: [{
+                    label: seriesLabel,
+                    data: points.map(point => point.pct),
+                    backgroundColor: points.map(point => point.pct >= 0 ? '#22c55e' : '#ef4444'),
+                    borderRadius: 5,
+                    maxBarThickness: 42
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: item => {
+                                const point = points[item.dataIndex];
+                                const sign = point.pct >= 0 ? '+' : '−';
+                                return [` ${seriesLabel}: ${sign}${Math.abs(point.pct).toFixed(1)}%`,
+                                    ` Cambio: ${sign}${fmtMoney(Math.abs(point.delta))}`,
+                                    point.comparisonLabel ? ` Comparado con: ${point.comparisonLabel}` : ''];
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { grid: { display: false }, ticks: { color: '#64748b', maxRotation: 0 } },
+                    y: {
+                        grid: { color: 'rgba(51,65,85,0.2)' },
+                        ticks: { color: '#64748b', callback: value => `${value}%` }
+                    }
+                }
+            }
+        });
+    }
+
+    function renderAssetsYearlyChangeChart() {
+        const history = getAssetsChangeHistory();
+        const snapshotsByYear = new Map();
+        history.forEach(item => snapshotsByYear.set(item.monthKey.slice(0, 4), item));
+        const byMonth = new Map(history.map(item => [item.monthKey, item]));
+        const years = [...snapshotsByYear.keys()].sort();
+        const points = buildAssetsChangePoints(years.map(year => {
+            const current = snapshotsByYear.get(year);
+            const [, month] = current.monthKey.split('-').map(Number);
+            const previousMonth = addMonths(Number(year), month, -12);
+            const previousKey = `${previousMonth.year}-${String(previousMonth.month).padStart(2, '0')}`;
+            return {
+                label: year,
+                value: current.value,
+                previousKey,
+                comparisonLabel: byMonth.get(previousKey)?.date || formatExpenseMonth(previousKey)
+            };
+        }), monthKey => byMonth.get(monthKey));
+        charts.assetsYearlyChange = renderAssetsChangeBarChart(
+            'assetsYearlyChangeChart', points, 'Cambio anual', 'No hay dos años comparables de activos.'
+        );
+    }
+
+    function renderAssetsCurrentYearChangeChart() {
+        const year = new Date().getFullYear();
+        const yearLabel = document.getElementById('assetsCurrentYearLabel');
+        if (yearLabel) yearLabel.textContent = year;
+        const history = getAssetsChangeHistory();
+        const byMonth = new Map(history.map(item => [item.monthKey, item]));
+        const currentYearEntries = history.filter(item => item.monthKey.startsWith(`${year}-`));
+        const points = buildAssetsChangePoints(currentYearEntries.map(item => {
+            const [, month] = item.monthKey.split('-').map(Number);
+            const previousMonth = addMonths(year, month, -1);
+            const previousKey = `${previousMonth.year}-${String(previousMonth.month).padStart(2, '0')}`;
+            return {
+                label: formatShortDate(item.date),
+                value: item.value,
+                previousKey,
+                comparisonLabel: byMonth.get(previousKey)?.date || formatExpenseMonth(previousKey)
+            };
+        }), monthKey => byMonth.get(monthKey));
+        charts.assetsCurrentYearChange = renderAssetsChangeBarChart(
+            'assetsCurrentYearChangeChart', points, 'Cambio mensual', `No hay meses comparables de ${year}.`
+        );
     }
 
     function renderAssetsVsLiabilitiesChart() {
@@ -2452,26 +2806,45 @@ function renderRatiosRadarChart() {
     if (!ctx) return;
     const h = appData.summary.ingresosNetos.history.map(d => ({
         date: formatShortDate(d.date),
-        value: d.value
+        monthKey: getExpenseMonthKey(d.isoDate || d.date),
+        value: getDbGastosMonthlyCategoryValues(getExpenseMonthKey(d.isoDate || d.date), 'ingresos')?.total ?? d.value
     }));
+    const incomeBudgetsByMonth = new Map();
+    const incomeBudgetMonths = new Set((appData.presupuesto || [])
+        .filter(row => row.tipo === 'Ingresos')
+        .map(row => getExpenseMonthKey(row.mesAno))
+        .filter(Boolean));
+    incomeBudgetMonths.forEach(key => {
+        incomeBudgetsByMonth.set(key, getIncomeBudgetRowsByCategory(key)
+            .reduce((sum, group) => sum + group.total, 0));
+    });
     charts.income = new Chart(ctx, {
         type: 'bar',
         data: {
         labels: h.map(d => {
             return String(d.date).replace(/'/g, "");
         }),
-        datasets: [{
-            label: 'Ingresos Netos',
-            data: h.map(d => d.value),
-            backgroundColor: '#22c55e',
-            borderRadius: 4,
-            barPercentage: 0.7
-        }]
+        datasets: [
+            {
+                label: 'Ingresos',
+                data: h.map(d => d.value),
+                backgroundColor: h.map(d => d.monthKey === incomeSelectedMonthKey ? '#16a34a' : '#22c55e'),
+                borderRadius: 4,
+                barPercentage: 0.7
+            },
+            {
+                label: 'Meta mensual',
+                data: h.map(d => incomeBudgetsByMonth.get(d.monthKey) ?? null),
+                backgroundColor: 'rgba(148,163,184,0.35)',
+                borderRadius: 4,
+                barPercentage: 0.7
+            }
+        ]
         },
         options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
+        plugins: { legend: { display: true, position: 'top', align: 'end', labels: { color: '#94a3b8', font: { size: 10 }, usePointStyle: true } } },
         scales: {
             x: { grid: { display: false }, ticks: { color: '#64748b', font: { size: 10 }, maxTicksLimit: 8 } },
             y: { grid: { color: 'rgba(51,65,85,0.2)' }, ticks: { color: '#64748b', font: { size: 10 }, callback: (v) => 'RD$' + (v/1000).toFixed(0) + 'K' } }
@@ -2533,28 +2906,54 @@ function renderRatiosRadarChart() {
     });
     }
 
-    function renderExpensesPieChart() {
-    const ctx = getCanvas('expensesPieChart');
-    if (!ctx) return;
-    const entries = Object.entries(appData.gastos || {}).map(([name, category]) => {
-      const history = category.history || [];
-      const monthEntry = history.find(item => getExpenseMonthKey(item.isoDate || item.date) === expensesSelectedMonthKey);
-      return { name, value: monthEntry?.value || 0 };
-    }).filter(item => item.value > 0).sort((a, b) => b.value - a.value);
+    function renderExpensesPieChart(dailyCategories = null) {
+    const container = document.getElementById('expensesPieChart');
+    if (!container) return;
+    const dbGastosTotals = dailyCategories ? null : getDbGastosMonthlyTotals(expensesSelectedMonthKey);
+    let entries = dailyCategories
+      ? dailyCategories.map(category => ({ name: category.name, value: Number(category.total) || 0 }))
+      : dbGastosTotals
+        ? dbGastosTotals.categories.map(category => ({ name: category.name, value: category.value }))
+        : Object.entries(appData.gastos || {}).map(([name, category]) => {
+          const value = getExpenseHistoryValue(category, expensesSelectedMonthKey);
+          return { name, value: value ?? 0 };
+        });
+    if (!dailyCategories && !entries.some(item => item.value > 0)) {
+      const categoryById = new Map((appData.categorias || []).map(category => [String(category.id), category]));
+      entries = (appData.presupuesto || [])
+        .filter(row => row.tipo === 'Gastos' && getExpenseMonthKey(row.mesAno) === expensesSelectedMonthKey)
+        .map(row => ({
+          name: categoryById.get(String(row.idCategoria))?.etiqueta || `Categoría ${row.idCategoria}`,
+          value: Number(row.gastoReal) || 0
+        }));
+    }
+    entries.sort((a, b) => b.value - a.value);
+    const nonZeroEntries = entries.filter(item => item.value > 0);
 
-    if (!entries.length) {
-      document.getElementById('expensesPieChart').innerHTML =
-        '<div class="modeco-empty-state">Sin distribución de gastos para el mes seleccionado</div>';
+    if (!nonZeroEntries.length) {
+      if (charts.expensesPie) {
+        charts.expensesPie.destroy();
+        delete charts.expensesPie;
+      }
+      container.innerHTML = '<div class="modeco-empty-state">Sin distribución de gastos para el mes seleccionado</div>';
       charts.expensesPie = null;
       return;
     }
+
+    if (charts.expensesPie) {
+      charts.expensesPie.destroy();
+      delete charts.expensesPie;
+    }
+    container.replaceChildren();
+    const ctx = getCanvas('expensesPieChart');
+    if (!ctx) return;
     
     charts.expensesPie = new Chart(ctx, {
         type: 'doughnut',
         data: {
-        labels: entries.map(e => e.name),
+        labels: nonZeroEntries.map(e => e.name),
         datasets: [{
-            data: entries.map(e => e.value),
+            data: nonZeroEntries.map(e => e.value),
             backgroundColor: ['#f97316', '#8b5cf6', '#0ea5e9', '#22c55e', '#ef4444', '#64748b', '#ec4899', '#3b82f6', '#f59e0b', '#14b8a6'],
             borderWidth: 0,
             hoverOffset: 6
@@ -3010,6 +3409,9 @@ function renderRatiosRadarChart() {
 // ============================================================================
 
 let gastosData = null;
+let expenseDbGastosLoading = false;
+let incomeDbGastosLoading = false;
+let gastosDataLoadingPromise = null;
 let gastoDetailChart = null;
 let dbGastosFilter = 'gastos'; // 'gastos' | 'ingresos' | 'todos'
 
@@ -3018,6 +3420,7 @@ const CAT_DB = {
   'AFI Reservas +': {padre:'Inversiones',etiqueta:'Investment',tipo:'Ingresos',nivel:2,esHoja:true},
   'Abuela': {padre:'Familia',etiqueta:'Donativos',tipo:'Gastos',nivel:3,esHoja:true},
   'Accesorios': {padre:'Ropa y calzado',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
+  'Alcanza +': {padre:'Inversiones',etiqueta:'Investment',tipo:'Ingresos',nivel:2,esHoja:true},
   'Accesorios (cargadores, auriculares)': {padre:'Tecnología y electrónica',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
   'Accesorios de Viaje': {padre:'Viajes y ocio',etiqueta:'Compras',tipo:'Gastos',nivel:3,esHoja:true},
   'Acciones': {padre:'Inversiones financieras',etiqueta:'Inversión',tipo:'Gastos',nivel:3,esHoja:true},
@@ -3305,10 +3708,13 @@ function getTipoColor(t) {
 
 // === CARGA LAZY DE DATOS ===
 function loadGastosData() {
-  return new Promise((resolve, reject) => {
+  if (gastosData) return Promise.resolve(gastosData);
+  if (gastosDataLoadingPromise) return gastosDataLoadingPromise;
+  gastosDataLoadingPromise = new Promise((resolve, reject) => {
     const callbackName = 'gastosCallback_' + Date.now();
     const script = document.createElement('script');
     const timeout = setTimeout(() => {
+      gastosDataLoadingPromise = null;
       reject(new Error('Timeout JSONP (getGastos)'));
       cleanup();
     }, 30000);
@@ -3321,15 +3727,18 @@ function loadGastosData() {
 
     window[callbackName] = (data) => {
       if (data && data.error) {
+        gastosDataLoadingPromise = null;
         reject(new Error(data.message));
       } else {
         gastosData = data;
+        gastosDataLoadingPromise = null;
         resolve(data);
       }
       cleanup();
     };
 
     script.onerror = () => {
+      gastosDataLoadingPromise = null;
       reject(new Error('Error de red JSONP (getGastos)'));
       cleanup();
     };
@@ -3338,6 +3747,7 @@ function loadGastosData() {
     script.src = url;
     document.head.appendChild(script);
   });
+  return gastosDataLoadingPromise;
 }
 
 async function renderDBGastosTab() {
@@ -6173,7 +6583,7 @@ function renderCategoryProjectionChart(containerId, projection, catName) {
     // Presupuesto (línea horizontal roja punteada)
     if (projection.budget > 0) {
         datasets.push({
-            label: 'Presupuesto',
+            label: projection.closed ? 'Gasto final del mes' : 'Presupuesto',
             data: labels.map(() => projection.budget),
             borderColor: '#ef4444',
             borderDash: [6, 6],
@@ -6228,7 +6638,7 @@ function renderCategoryProjectionChart(containerId, projection, catName) {
         tension: 0.2
     });
 
-    datasets.push({
+    if (projection.projected) datasets.push({
         label: 'Gastos Acumulado Proyectado',
         data: projection.projected,
         borderColor: '#f8fafc',
@@ -6239,7 +6649,7 @@ function renderCategoryProjectionChart(containerId, projection, catName) {
         tension: 0.2
     });
 
-    datasets.push({
+    if (!projection.closed) datasets.push({
         label: 'HOY',
         data: labels.map((_, i) => i === today - 1 ? projection.todayTotal : null),
         borderColor: '#fbbf24',
@@ -6309,48 +6719,286 @@ function renderCategoryProjectionChart(containerId, projection, catName) {
     });
 }
 
-// Carga 3 meses y renderiza los charts de cada categoría
-async function loadExpenseProjections(gastosMostrar) {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = now.getMonth() + 1;
-    const prev1 = addMonths(y, m, -1);
-    const prev2 = addMonths(y, m, -2);
+function renderExpenseCategoryMonthComparison(containerId, categoryName, selectedMonthKey, kind = 'gastos') {
+    const sourceMonths = [...(gastosData?.meses || [])].sort((a, b) =>
+        getExpenseMonthKey(b.isoDate || b.mes).localeCompare(getExpenseMonthKey(a.isoDate || a.mes))
+    );
+    const selectedIndex = sourceMonths.findIndex(month =>
+        getExpenseMonthKey(month.isoDate || month.mes) === selectedMonthKey
+    );
+    if (selectedIndex < 0) return false;
 
-    // ← Promise.allSettled: si un mes falla, los otros siguen
-    const results = await Promise.allSettled([
-        loadDailySupabase('gastos', y, m),
-        loadDailySupabase('gastos', prev1.year, prev1.month),
-        loadDailySupabase('gastos', prev2.year, prev2.month)
-    ]);
+    // La hoja está en orden del más reciente al más antiguo; tomamos el mes elegido y cinco previos.
+    const monthWindow = sourceMonths.slice(selectedIndex, selectedIndex + 6).reverse();
+    const categoryKey = normalizeExpenseCategoryName(
+        [...DB_GASTOS_PRIMARY_CATEGORIES, ...DB_GASTOS_PRIMARY_INCOME_CATEGORIES].find(name => normalizeExpenseCategoryName(name) === normalizeExpenseCategoryName(categoryName))
+        || getCatMeta(categoryName).etiqueta
+        || categoryName
+    );
+    const values = monthWindow.map(month => {
+        const rawValue = Object.entries(month.valores || {}).find(([name]) =>
+            normalizeExpenseCategoryName(name) === categoryKey
+        )?.[1];
+        return Number(rawValue) || 0;
+    });
+    const previousValues = values.slice(0, -1);
+    const priorAverage = previousValues.length
+        ? previousValues.reduce((sum, value) => sum + value, 0) / previousValues.length
+        : null;
+    const selectedIsLast = monthWindow.at(-1) &&
+        getExpenseMonthKey(monthWindow.at(-1).isoDate || monthWindow.at(-1).mes) === selectedMonthKey;
+    if (!selectedIsLast) return false;
 
-    const fails = results.filter(r => r.status === 'rejected');
-    if (fails.length > 0) {
-        console.warn(`⚠️ ${fails.length}/3 meses fallaron:`,
-            fails.map(f => f.reason?.message || String(f.reason)));
+    const ctx = getCanvas(containerId);
+    if (!ctx) return false;
+    const selectedLabel = formatExpenseMonth(selectedMonthKey);
+    const labels = monthWindow.map(month => formatExpenseMonth(
+        getExpenseMonthKey(month.isoDate || month.mes)
+    ));
+    const colors = monthWindow.map((_, index) =>
+        index === monthWindow.length - 1 ? '#f59e0b' : 'rgba(59,130,246,0.68)'
+    );
+    const comparisonCategoryKey = kind === 'ingresos' ? normalizeIncomeCategoryName(categoryName) : categoryKey;
+    const budgetsByMonth = new Map();
+    if (kind === 'ingresos') {
+        monthWindow.forEach(month => {
+            const key = getExpenseMonthKey(month.isoDate || month.mes);
+            const group = getIncomeBudgetRowsByCategory(key).find(item =>
+                normalizeIncomeCategoryName(item.name) === comparisonCategoryKey
+            );
+            if (group) budgetsByMonth.set(key, group.total);
+        });
+    } else {
+        const categoryById = new Map((appData.categorias || []).map(category => [
+            String(category.id).trim(), normalizeExpenseCategoryName(category.etiqueta || category.nombre)
+        ]));
+        (appData.presupuesto || []).forEach(row => {
+            if (row.tipo !== 'Gastos') return;
+            const key = getExpenseMonthKey(row.mesAno);
+            const categoryKeyForRow = categoryById.get(String(row.idCategoria).trim());
+            if (!key || categoryKeyForRow !== comparisonCategoryKey) return;
+            budgetsByMonth.set(key, (budgetsByMonth.get(key) || 0) + (Number(row.montoPresupuestado) || 0));
+        });
     }
+    const isClosedMonth = selectedMonthKey < getExpenseMonthKey(new Date());
+    const selectedCategoryBudget = kind === 'gastos' && isClosedMonth
+        ? values.at(-1)
+        : (budgetsByMonth.get(selectedMonthKey) ?? null);
 
-    // Sin el mes actual no podemos proyectar — salir limpio
-    if (results[0].status === 'rejected') {
-        console.warn('Sin datos del mes actual — omitiendo proyecciones');
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [
+                {
+                    type: 'bar',
+                    label: kind === 'ingresos' ? 'Ingreso mensual' : 'Gasto mensual',
+                    data: values,
+                    backgroundColor: colors,
+                    borderRadius: 5,
+                    maxBarThickness: 38
+                },
+                ...(priorAverage === null ? [] : [{
+                    type: 'line',
+                    label: 'Promedio de meses anteriores',
+                    data: labels.map(() => priorAverage),
+                    borderColor: '#22c55e',
+                    borderDash: [5, 4],
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    fill: false
+                }]),
+                ...(selectedCategoryBudget === null ? [] : [{
+                    type: 'line',
+                    label: kind === 'ingresos' ? 'Meta de la categoría' : 'Presupuesto de la categoría',
+                    data: labels.map(() => selectedCategoryBudget),
+                    borderColor: '#f87171',
+                    borderDash: [3, 3],
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    pointBackgroundColor: '#f87171',
+                    spanGaps: false,
+                    fill: false
+                }])
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { intersect: false, mode: 'index' },
+            plugins: {
+                title: {
+                    display: true,
+                    text: `Seleccionado: ${selectedLabel}`,
+                    color: '#94a3b8',
+                    align: 'start',
+                    font: { size: 11, weight: '600' },
+                    padding: { bottom: 8 }
+                },
+                legend: {
+                    position: 'top',
+                    labels: { color: '#94a3b8', font: { size: 10 }, usePointStyle: true, boxWidth: 8 }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: item => ` ${item.dataset.label}: ${fmtMoney(item.parsed.y)}`
+                    }
+                }
+            },
+            scales: {
+                x: { grid: { display: false }, ticks: { color: '#94a3b8', maxRotation: 0 } },
+                y: {
+                    beginAtZero: true,
+                    grid: { color: 'rgba(51,65,85,0.2)' },
+                    ticks: { color: '#64748b', callback: value => formatCompactMoney(value) }
+                }
+            }
+        }
+    });
+    return true;
+}
+
+function loadExpenseProjections(expenseLines, monthKey = expensesSelectedMonthKey) {
+    if (expensesSelectedMonthKey !== monthKey || !gastosData) return;
+    expenseLines.forEach((line, index) => {
+        const chartId = `expenseProjChart_${index}`;
+        const wrapper = document.querySelector(`[data-proj-chart-id="${chartId}"]`);
+        if (!wrapper) return;
+        wrapper.style.display = 'block';
+        if (!renderExpenseCategoryMonthComparison(chartId, line.name, monthKey)) wrapper.style.display = 'none';
+    });
+}
+
+function loadIncomeCategoryComparisons(incomeLines, monthKey = incomeSelectedMonthKey) {
+    if (incomeSelectedMonthKey !== monthKey || !gastosData) return;
+    incomeLines.forEach((line, index) => {
+        const chartId = `incomeProjChart_${index}`;
+        const wrapper = document.querySelector(`[data-proj-chart-id="${chartId}"]`);
+        if (!wrapper) return;
+        wrapper.style.display = 'block';
+        if (!renderExpenseCategoryMonthComparison(chartId, line.name, monthKey, 'ingresos')) {
+            wrapper.style.display = 'none';
+        }
+    });
+}
+
+function escapeExpenseHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[char]);
+}
+
+async function toggleExpenseCategoryDetail(index) {
+    return toggleMonthlyCategoryDetail(index, 'gastos');
+}
+
+async function toggleIncomeCategoryDetail(index) {
+    return toggleMonthlyCategoryDetail(index, 'ingresos');
+}
+
+async function toggleMonthlyCategoryDetail(index, kind) {
+    const panelId = `${kind === 'ingresos' ? 'income' : 'expense'}CategoryDetail_${index}`;
+    const panel = document.getElementById(panelId);
+    const card = document.querySelector(`[aria-controls="${panelId}"]`);
+    if (!panel || !card) return;
+    if (!panel.hidden) {
+        panel.hidden = true;
+        card.setAttribute('aria-expanded', 'false');
+        const hint = card.querySelector('.expense-detail-hint');
+        if (hint) hint.textContent = 'Ver detalle⌄';
         return;
     }
 
-    const categorias = appData.categorias || [];
+    panel.hidden = false;
+    card.setAttribute('aria-expanded', 'true');
+    const hint = card.querySelector('.expense-detail-hint');
+    if (hint) hint.textContent = 'Ocultar detalle⌃';
+    const monthKey = kind === 'ingresos' ? incomeSelectedMonthKey : expensesSelectedMonthKey;
+    if (panel.dataset.loadedMonth === monthKey) return;
+    panel.innerHTML = '<div class="expense-detail-loading">Cargando movimientos del mes…</div>';
+    const categoryName = card.querySelector('.expense-name, .income-name')?.textContent || '';
+    const [year, month] = monthKey.split('-').map(Number);
+    try {
+        const data = await loadDailySupabase(kind, year, month);
+        const currentMonthKey = kind === 'ingresos' ? incomeSelectedMonthKey : expensesSelectedMonthKey;
+        if (currentMonthKey !== monthKey || panel.hidden) return;
+        panel.innerHTML = renderExpenseCategoryDetail(data, categoryName, monthKey, kind);
+        panel.dataset.loadedMonth = monthKey;
+    } catch (error) {
+        panel.innerHTML = '<div class="expense-detail-empty">No se pudieron cargar los movimientos de esta categoría.</div>';
+        console.warn('Error cargando detalle de categoría:', error);
+    }
+}
 
-    gastosMostrar.forEach((p, idx) => {
-        const cat = categorias.find(c => c.id == p.idCategoria);
-        const nombre = cat ? cat.etiqueta : 'Categoría ' + p.idCategoria;
+function renderExpenseCategoryDetail(data, categoryName, monthKey) {
+    const canonicalCategory = name => {
+        const normalized = normalizeExpenseCategoryName(name);
+        const mapped = normalizeExpenseCategoryName(getCatMeta(name).etiqueta);
+        if (normalized === 'investment' || mapped === 'investment') return 'inversiones';
+        return mapped && mapped !== 'general' ? mapped : normalized;
+    };
+    const target = canonicalCategory(categoryName);
+    const rootFor = name => {
+        return canonicalCategory(name);
+    };
+    const matchesCategory = name => canonicalCategory(name) === target || rootFor(name) === target;
+    const movements = (data?.movimientos || []).filter(item => matchesCategory(item.categoria));
+    const escape = escapeExpenseHtml;
 
-        const projection = buildCategoryProjection(nombre, p.montoPresupuestado);
-        if (!projection) return;
+    if (movements.length) {
+        const total = movements.reduce((sum, item) => sum + (Number(item.monto) || 0), 0);
+        const byDay = new Map();
+        movements.forEach(item => byDay.set(item.fecha, (byDay.get(item.fecha) || 0) + (Number(item.monto) || 0)));
+        const dailySummary = [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+        const rows = movements.slice().sort((a, b) =>
+            String(b.fecha).localeCompare(String(a.fecha)) || (Number(b.monto) || 0) - (Number(a.monto) || 0)
+        );
+        const dailyHtml = dailySummary.map(([date, amount]) => `
+            <div class="expense-detail-day"><span>${escape(formatExpenseDay(date))}</span><strong>${fmtMoney(amount)}</strong></div>
+        `).join('');
+        const movementHtml = rows.map(item => `
+            <tr>
+                <td>${escape(formatExpenseDay(item.fecha))}</td>
+                <td>${escape(item.categoria)}</td>
+                <td>${escape(item.descripcion || item.nota || 'Sin descripción')}${item.cuenta ? `<small>${escape(item.cuenta)}</small>` : ''}</td>
+                <td class="expense-detail-amount">${fmtMoney(Number(item.monto) || 0)}</td>
+            </tr>
+        `).join('');
+        return `
+            <div class="expense-detail-summary"><strong>${fmtMoney(total)}</strong><span>${rows.length} movimientos · ${dailySummary.length} días con actividad</span></div>
+            <div class="expense-detail-days">${dailyHtml}</div>
+            <div class="expense-detail-table-wrap"><table class="expense-detail-table"><thead><tr><th>Fecha</th><th>Subcategoría</th><th>Descripción / cuenta</th><th>Monto</th></tr></thead><tbody>${movementHtml}</tbody></table></div>
+        `;
+    }
 
-        const chartId = `expenseProjChart_${idx}`;
-        const wrapper = document.querySelector(`[data-proj-chart-id="${chartId}"]`);
-        if (wrapper) {
-            wrapper.style.display = 'block';
-            renderCategoryProjectionChart(chartId, projection, nombre);
+    // Compatibilidad con respuestas antiguas del endpoint: mostrar al menos el gasto por día.
+    const dailyRows = (data?.dias || []).map(day => {
+        const amount = Object.entries(day.categorias || {}).reduce((sum, [name, value]) =>
+            matchesCategory(name) ? sum + (Number(value) || 0) : sum, 0);
+        return { date: day.fecha, amount };
+    }).filter(day => day.amount > 0).sort((a, b) => b.date.localeCompare(a.date));
+    if (!dailyRows.length) {
+        if (!Array.isArray(data?.movimientos)) {
+            return `<div class="expense-detail-empty">El resumen diario está disponible, pero el endpoint de Apps Script aún no entrega los movimientos individuales. Debe desplegarse la actualización de Exportacion.gs.</div>`;
         }
+        if (data.movimientos.length === 0 && !(Number(data.totalTransacciones) > 0)) {
+            return `<div class="expense-detail-empty">Wallet/Supabase no devolvió transacciones para ${escape(formatExpenseMonth(monthKey))}.</div>`;
+        }
+        return `<div class="expense-detail-empty">Se recibieron ${data.movimientos.length} movimientos del mes, pero ninguno coincide con la categoría “${escape(categoryName)}”.</div>`;
+    }
+    const total = dailyRows.reduce((sum, day) => sum + day.amount, 0);
+    return `
+        <div class="expense-detail-summary"><strong>${fmtMoney(total)}</strong><span>Detalle diario agregado · movimientos individuales no disponibles</span></div>
+        <div class="expense-detail-days">${dailyRows.map(day => `
+            <div class="expense-detail-day"><span>${escape(formatExpenseDay(day.date))}</span><strong>${fmtMoney(day.amount)}</strong></div>
+        `).join('')}</div>
+    `;
+}
+
+function formatExpenseDay(value) {
+    const date = new Date(`${String(value || '').substring(0, 10)}T12:00:00`);
+    return Number.isNaN(date.getTime()) ? String(value || '') : date.toLocaleDateString('es-DO', {
+        weekday: 'short', day: 'numeric', month: 'short'
     });
 }
 
@@ -6440,13 +7088,95 @@ function formatCompactMoney(val) {
   return 'RD$' + Math.round(val);
 }
 
+function renderExpenseDailyFallback(data) {
+  if (!data || expensesSelectedMonthKey !== `${data.year}-${String(data.month).padStart(2, '0')}`) return;
+
+  const hasBudgetRows = (appData.presupuesto || []).some(row =>
+    row.tipo === 'Gastos' && getExpenseMonthKey(row.mesAno) === expensesSelectedMonthKey
+  );
+  const balanceActual = getExpenseHistoryValue(appData.summary.gastosTotal, expensesSelectedMonthKey);
+  const dbGastosTotals = getDbGastosMonthlyTotals(expensesSelectedMonthKey);
+  if (!hasBudgetRows && balanceActual === null && dbGastosTotals === null) {
+    const valueEl = document.getElementById('expensesActualValue');
+    const subEl = document.getElementById('expensesActualSub');
+    const isClosedMonth = expensesSelectedMonthKey < getExpenseMonthKey(new Date());
+    const finalValue = Number(data.totalMes) || 0;
+    if (valueEl) {
+      valueEl.textContent = fmtMoney(finalValue);
+      valueEl.style.color = '#e2e8f0';
+    }
+    if (subEl) subEl.textContent = isClosedMonth
+      ? 'Cierre mensual según transacciones de Wallet / Supabase'
+      : 'Total de transacciones en Wallet / Supabase';
+    if (isClosedMonth) {
+      const budgetValueEl = document.getElementById('expensesBudgetValue');
+      const budgetSubEl = document.getElementById('expensesBudgetSub');
+      if (budgetValueEl) budgetValueEl.textContent = fmtMoney(finalValue);
+      if (budgetSubEl) budgetSubEl.textContent = 'Mes cerrado · referencia igual al gasto final';
+    }
+  }
+
+  const hasHistoryByCategory = Object.values(appData.gastos || {}).some(category => {
+    const amount = getExpenseHistoryValue(category, expensesSelectedMonthKey);
+    return amount !== null && amount !== 0;
+  });
+  if (hasBudgetRows || hasHistoryByCategory || dbGastosTotals !== null) return;
+
+  const categories = (data.topCategorias || []).filter(category => Number(category.total) > 0);
+  const container = document.getElementById('expenseCategoriesList');
+  if (!container) return;
+  clearExpenseProjectionCharts();
+  if (!categories.length) {
+    container.innerHTML = '<div class="modeco-empty-state">Sin transacciones de gasto en el mes seleccionado.</div>';
+  } else {
+    const total = categories.reduce((sum, category) => sum + Number(category.total || 0), 0);
+    const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[char]);
+    container.innerHTML = `<div class="asset-list">${categories.map((category, index) => {
+      const share = total > 0 ? (category.total / total) * 100 : 0;
+      const color = CATEGORY_PALETTE[index % CATEGORY_PALETTE.length];
+      return `
+        <div class="expense-card expense-category-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="expenseCategoryDetail_${index}"
+             onclick="toggleExpenseCategoryDetail(${index})"
+             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleExpenseCategoryDetail(${index})}"
+             style="border-left:3px solid ${color}">
+          <div class="expense-icon" style="background:${color}20;color:${color}">${index + 1}</div>
+          <div class="expense-main">
+            <div class="expense-header"><div class="expense-name">${escapeHtml(category.name)}</div><div style="display:flex;align-items:center;gap:10px"><span class="expense-detail-hint">Ver detalle⌄</span><div class="expense-pct" style="color:${color}">${expensesSelectedMonthKey < getExpenseMonthKey(new Date()) ? '100.0%' : `${share.toFixed(1)}%`}</div></div></div>
+            <div class="expense-meta">${fmtMoney(category.total)}${expensesSelectedMonthKey < getExpenseMonthKey(new Date()) ? ` / ${fmtMoney(category.total)} · gasto final` : ' · sin presupuesto asignado'}</div>
+            <div class="expense-bar-track"><div class="expense-bar-remaining" style="width:${expensesSelectedMonthKey < getExpenseMonthKey(new Date()) ? 100 : Math.min(share, 100)}%;background:${color}"></div></div>
+          </div>
+        </div>
+        <div class="expense-category-detail" id="expenseCategoryDetail_${index}" hidden></div>
+        <div class="expense-projection" data-proj-chart-id="expenseProjChart_${index}"
+             style="display:block;padding:14px 16px;background:rgba(15,23,42,0.55);border:1px solid rgba(51,65,85,0.2);border-top:none;border-radius:0 0 12px 12px;margin-top:-10px;margin-bottom:10px;">
+          <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px;">📈 Comparación con meses anteriores · ${escapeHtml(category.name)}</div>
+          <div class="chart-container" id="expenseProjChart_${index}" style="height:240px;"></div>
+        </div>`;
+    }).join('')}</div>`;
+  }
+  if (categories.length) {
+    setTimeout(() => loadExpenseProjections(categories.map(category => ({
+      name: category.name,
+      montoPresupuestado: Number(category.total) || 0
+    })), expensesSelectedMonthKey), 50);
+  }
+
+  if (charts.expensesPie) {
+    charts.expensesPie.destroy();
+    delete charts.expensesPie;
+  }
+  renderExpensesPieChart(categories);
+}
+
 async function renderDailySupabase(tipo) {
   const isGasto   = tipo === 'gastos';
   const chartId   = isGasto ? 'dailyGastosChart'    : 'dailyIngresosChart';
   const statsId   = isGasto ? 'dailyGastosStats'    : 'dailyIngresosStats';
   const listId    = isGasto ? 'dailyGastosList'     : 'dailyIngresosList';
   const heatmapId = isGasto ? 'dailyGastosHeatmap'  : 'dailyIngresosHeatmap';
-  const selectId  = isGasto ? 'expensesMonthSelect' : 'dailyIngresosMonth';
+  const selectId  = isGasto ? 'expensesMonthSelect' : 'incomeMonthSelect';
 
   const statsEl = document.getElementById(statsId);
   const listEl  = document.getElementById(listId);
@@ -6455,33 +7185,18 @@ async function renderDailySupabase(tipo) {
   statsEl.innerHTML = '<div class="stat-card" style="grid-column:1/-1">' +
     '<div class="stat-value" style="font-size:14px;color:#64748b">⏳ Cargando...</div></div>';
 
-  // Ingresos conserva su selector propio; Gastos usa el selector único de la sección.
+  // Ambas secciones comparten un selector único para resumen y detalle diario.
   const select = document.getElementById(selectId);
-  if (!isGasto && select && select.options.length === 0) {
-    const now = new Date();
-    for (let i = 0; i < 24; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const val = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
-      const lbl = d.toLocaleDateString('es-DO', { month: 'long', year: 'numeric' });
-      const opt = document.createElement('option');
-      opt.value = val;
-      opt.textContent = lbl.charAt(0).toUpperCase() + lbl.slice(1);
-      select.appendChild(opt);
-    }
-  }
-
   const selValue = isGasto
     ? (expensesSelectedMonthKey || select?.value)
-    : (select?.value ||
-      (new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0')));
+    : (incomeSelectedMonthKey || select?.value);
   const [yearStr, monthStr] = selValue.split('-');
 
   try {
     const data = await loadDailySupabase(tipo, yearStr, monthStr);
-    const currentlySelected = isGasto
-      ? expensesSelectedMonthKey
-      : document.getElementById(selectId)?.value;
+    const currentlySelected = isGasto ? expensesSelectedMonthKey : incomeSelectedMonthKey;
     if (currentlySelected && currentlySelected !== selValue) return;
+    if (isGasto) renderExpenseDailyFallback(data);
 
     if (!data.dias || data.dias.length === 0) {
       statsEl.innerHTML = '<div class="stat-card" style="grid-column:1/-1">' +
@@ -6662,7 +7377,7 @@ async function renderDailySupabase(tipo) {
   } catch (e) {
     const currentlySelected = isGasto
       ? expensesSelectedMonthKey
-      : document.getElementById(selectId)?.value;
+      : incomeSelectedMonthKey;
     if (currentlySelected && currentlySelected !== selValue) return;
     console.error('Error cargando ' + tipo + ' de Supabase:', e);
     statsEl.innerHTML = '<div class="stat-card" style="grid-column:1/-1">' +

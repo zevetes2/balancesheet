@@ -323,17 +323,32 @@ function getDeuda(data) {
     // En la hoja: positivo = deuda (gastado), negativo = crédito a favor
     return data && data.current > 0 ? data.current : 0;
 }
+function getLiabilityMonthChange(data) {
+    if (!data || data.previous === null || data.previous === undefined || data.previous === '') {
+        return { amount: null, label: 'Sin dato del mes anterior', color: '#64748b' };
+    }
+    const currentDebt = getDeuda(data);
+    const previousDebt = getDeuda({ current: Number(data.previous) || 0 });
+    const amount = currentDebt - previousDebt;
+    if (Math.abs(amount) < 0.01) return { amount: 0, label: 'Sin cambio vs. mes anterior', color: '#94a3b8' };
+    return amount > 0
+        ? { amount, label: `Aumentó ${fmtMoney(amount)} vs. mes anterior`, color: '#f87171' }
+        : { amount, label: `Bajó ${fmtMoney(Math.abs(amount))} vs. mes anterior`, color: '#4ade80' };
+}
+function formatCreditUtilization(debt, limit) {
+    return limit > 0 ? `Utilización ${((debt / limit) * 100).toFixed(1)}%` : 'Sin límite configurado';
+}
 function getDisponible(name, data) {
     const limite = getCreditLimit(name);
     if (limite === 0) return 0;
     const deuda = getDeuda(data);
     const excedente = data && data.current < 0 ? Math.abs(data.current) : 0;
-    return Math.max(0, limite - deuda + excedente);
+    return limite - deuda + excedente;
 }
 function getUtilizacion(name, data) {
     const limite = getCreditLimit(name);
-    if (limite === 0) return 0;
-    return Math.min(100, (getDeuda(data) / limite) * 100);
+    if (limite <= 0) return null;
+    return (getDeuda(data) / limite) * 100;
 }
 function getDeudaRotativa() {
     // Suma deuda de tarjetas + líneas (NO préstamos)
@@ -1280,14 +1295,52 @@ function loadDataJSONP() {
     const deudaTarjetas = tarjetas.reduce((sum, t) => sum + getDeuda(t.data), 0);
     const deudaLineas   = lineas.reduce((sum, l) => sum + getDeuda(l.data), 0);
     const deudaPrestamos = prestamos.reduce((sum, p) => sum + getDeuda(p.data), 0);
-    const totalPasivos = s.pasivosTotal.current; // oficial desde backend
+    const totalPasivos = Number(s.pasivosTotal.current);
+    const patrimonio = Number(s.patrimonioNeto.current);
+    const activos = Number(s.activosTotales.current);
+    const efectivo = Number(s.liquidoTotal.current);
 
     const limiteTarjetas = TARJETAS_NOMBRES.reduce((sum, n) => sum + getCreditLimit(n), 0);
     const limiteLineas   = LINEAS_NOMBRES.reduce((sum, n) => sum + getCreditLimit(n), 0);
     const limiteTotal    = limiteTarjetas + limiteLineas;
 
-    const disponibleTotal = Math.max(0, limiteTotal - deudaTarjetas - deudaLineas);
-    const utilizacionPct  = limiteTotal > 0 ? ((deudaTarjetas + deudaLineas) / limiteTotal) * 100 : 0;
+    const disponibleTotal = limiteTotal - deudaTarjetas - deudaLineas;
+    const utilizacionPct  = limiteTotal > 0 ? ((deudaTarjetas + deudaLineas) / limiteTotal) * 100 : null;
+    const deudaPatrimonio = patrimonio > 0 ? (totalPasivos / patrimonio) * 100 : null;
+    const deudaActivos = activos > 0 ? (totalPasivos / activos) * 100 : null;
+    const coberturaLiquida = totalPasivos > 0 ? efectivo / totalPasivos : null;
+    const resumenTarjetas = document.getElementById('tarjetasResumen');
+    const resumenLineas = document.getElementById('lineasResumen');
+    const resumenPrestamos = document.getElementById('prestamosResumen');
+    const fmtAvailable = value => value < 0 ? `Exceso ${fmtMoney(Math.abs(value))}` : `${fmtMoney(value)} disponible`;
+    if (resumenTarjetas) resumenTarjetas.textContent = `Saldo ${fmtMoney(deudaTarjetas)} · ${formatCreditUtilization(deudaTarjetas, limiteTarjetas)} · ${fmtAvailable(limiteTarjetas - deudaTarjetas)}`;
+    if (resumenLineas) resumenLineas.textContent = `Saldo ${fmtMoney(deudaLineas)} · ${formatCreditUtilization(deudaLineas, limiteLineas)} · ${fmtAvailable(limiteLineas - deudaLineas)}`;
+    if (resumenPrestamos) resumenPrestamos.textContent = `Saldo pendiente total: ${fmtMoney(deudaPrestamos)}`;
+
+    const liabilityAllocation = [
+        { name: 'Tarjetas de crédito', value: deudaTarjetas, color: '#ef4444' },
+        { name: 'Líneas de crédito', value: deudaLineas, color: '#f59e0b' },
+        { name: 'Préstamos', value: deudaPrestamos, color: '#8b5cf6' }
+    ];
+    const detailedLiabilities = liabilityAllocation.reduce((sum, item) => sum + item.value, 0);
+    const unclassifiedLiabilities = Math.max(0, totalPasivos - detailedLiabilities);
+    if (unclassifiedLiabilities > 0.5) liabilityAllocation.push({
+        name: 'Pasivos sin desglose', value: unclassifiedLiabilities, color: '#64748b'
+    });
+    const allocationEl = document.getElementById('liabilitiesDistribution');
+    if (allocationEl) {
+        allocationEl.innerHTML = `
+            <div class="asset-allocation-list">${liabilityAllocation.map(item => {
+                const pct = totalPasivos > 0 ? (item.value / totalPasivos) * 100 : 0;
+                return `<div class="asset-allocation-item">
+                    <div class="asset-allocation-heading"><span><i style="background:${item.color}"></i>${item.name}</span><strong>${pct.toFixed(1)}%</strong></div>
+                    <div class="asset-allocation-track"><div style="width:${Math.min(100, Math.max(0, pct))}%;background:${item.color}"></div></div>
+                    <div class="asset-allocation-value">${fmtMoney(item.value)}</div>
+                </div>`;
+            }).join('')}</div>
+            ${detailedLiabilities - totalPasivos > Math.max(1, totalPasivos * 0.001) ? `<div class="asset-allocation-note">Las deudas detalladas exceden el total oficial de pasivos por ${fmtMoney(detailedLiabilities - totalPasivos)}. Revisa posibles solapamientos o cuentas duplicadas.</div>` : ''}
+        `;
+    }
 
     // ─── Stat Cards ───
     const html = `
@@ -1298,18 +1351,23 @@ function loadDataJSONP() {
         </div>
         <div class="stat-card">
             <div class="stat-header"><span class="stat-label">Utilización Crédito</span></div>
-            <div class="stat-value">${utilizacionPct.toFixed(1)}%</div>
-            <div class="stat-sub">de ${fmtMoney(limiteTotal)} límite · ${fmtMoney(disponibleTotal)} disponible</div>
+            <div class="stat-value">${utilizacionPct === null ? '—' : utilizacionPct.toFixed(1) + '%'}</div>
+            <div class="stat-sub">${utilizacionPct === null ? 'No hay límites configurados' : `de ${fmtMoney(limiteTotal)} límite · ${disponibleTotal < 0 ? `exceso ${fmtMoney(Math.abs(disponibleTotal))}` : `${fmtMoney(disponibleTotal)} disponible`}`}</div>
         </div>
         <div class="stat-card">
             <div class="stat-header"><span class="stat-label">Ratio Deuda/Patrimonio</span></div>
-            <div class="stat-value">${((totalPasivos/s.patrimonioNeto.current)*100).toFixed(1)}%</div>
-            <div class="stat-sub">${totalPasivos > s.patrimonioNeto.current * 0.5 ? '⚠️ Alto' : '✅ Saludable'} (&lt;50%)</div>
+            <div class="stat-value">${deudaPatrimonio === null ? '—' : deudaPatrimonio.toFixed(1) + '%'}</div>
+            <div class="stat-sub">${patrimonio > 0 ? 'Pasivos ÷ patrimonio positivo' : patrimonio < 0 ? 'No interpretable: patrimonio negativo' : 'No interpretable: patrimonio cero'}</div>
         </div>
         <div class="stat-card">
             <div class="stat-header"><span class="stat-label">Líquido Cubre Deuda</span></div>
-            <div class="stat-value">${s.liquidoTotal.current > 0 ? (s.liquidoTotal.current/totalPasivos).toFixed(1) : '0.0'}x</div>
-            <div class="stat-sub">Cobertura inmediata</div>
+            <div class="stat-value">${coberturaLiquida === null ? '—' : coberturaLiquida.toFixed(1) + 'x'}</div>
+            <div class="stat-sub">${totalPasivos > 0 ? 'Efectivo ÷ pasivos totales' : 'Sin pasivos; cobertura no aplica'}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-header"><span class="stat-label">Deuda / Activos</span></div>
+            <div class="stat-value">${deudaActivos === null ? '—' : deudaActivos.toFixed(1) + '%'}</div>
+            <div class="stat-sub">${activos > 0 ? 'Parte de los activos financiada con pasivos' : 'No interpretable: activos cero o negativos'}</div>
         </div>
     `;
     document.getElementById('liabilitiesStats').innerHTML = html;
@@ -1319,6 +1377,7 @@ function loadDataJSONP() {
         .sort((a, b) => getDeuda(b.data) - getDeuda(a.data))
         .map(({name, data}) => {
             const deuda = getDeuda(data);
+            const change = getLiabilityMonthChange(data);
             const limite = getCreditLimit(name);
             const disponible = getDisponible(name, data);
             const util = getUtilizacion(name, data);
@@ -1327,15 +1386,16 @@ function loadDataJSONP() {
                 <div class="liability-item" onclick="openCreditModal('${name}')" style="cursor:pointer">
                     <div class="liability-icon-wrap" style="background:${color}20;color:${color}">💳</div>
                     <div class="liability-info">
-                        <div class="liability-name">${name}</div>
-                        <div class="liability-meta">Límite: ${fmtMoney(limite)} · Usado: ${fmtMoney(deuda)} · ${util.toFixed(1)}%</div>
+                    <div class="liability-name">${name}</div>
+                    <div class="liability-meta" style="color:${change.color}">${change.label}</div>
+                    <div class="liability-meta">Límite ${fmtMoney(limite)} · Utilizado ${util === null ? '—' : util.toFixed(1) + '%'}${util > 100 ? ' · Sobre el límite' : ''}</div>
                         <div class="liability-progress-track">
-                            <div class="liability-progress-fill" style="width:${util}%;background:${color}"></div>
+                            <div class="liability-progress-fill" style="width:${Math.min(100, Math.max(0, util || 0))}%;background:${color}"></div>
                         </div>
                     </div>
                     <div class="liability-value">
-                        <div class="liability-amount" style="color:${deuda > 0 ? '#f87171' : '#4ade80'}">${fmtMoney(deuda)}</div>
-                        <div class="liability-sub">${fmtMoney(disponible)} disp.</div>
+                    <div class="liability-amount" style="color:${deuda > 0 ? '#f87171' : '#4ade80'}">${fmtMoney(deuda)}</div>
+                        <div class="liability-sub">${disponible < 0 ? `Exceso ${fmtMoney(Math.abs(disponible))}` : `${fmtMoney(disponible)} disp.`}</div>
                     </div>
                 </div>
             `;
@@ -1344,16 +1404,12 @@ function loadDataJSONP() {
         `<div class="liability-list">${tarjetasHtml}</div>` : 
         '<div style="color:#64748b;padding:20px;text-align:center;">No hay tarjetas registradas.</div>';
 
-    const tarjetasDisp = tarjetas.reduce((sum, t) => sum + getDisponible(t.name, t.data), 0);
-    const tarjetasUtil = limiteTarjetas > 0 ? (deudaTarjetas / limiteTarjetas) * 100 : 0;
-    const tarjetasHeader = document.getElementById('tarjetasLimiteTotal');
-    if (tarjetasHeader) tarjetasHeader.textContent = fmtMoney(limiteTarjetas);
-
     // ─── Renderizar Líneas de Crédito ───
     const lineasHtml = lineas
         .sort((a, b) => getDeuda(b.data) - getDeuda(a.data))
         .map(({name, data}) => {
             const deuda = getDeuda(data);
+            const change = getLiabilityMonthChange(data);
             const limite = getCreditLimit(name);
             const disponible = getDisponible(name, data);
             const util = getUtilizacion(name, data);
@@ -1362,15 +1418,16 @@ function loadDataJSONP() {
                 <div class="liability-item" onclick="openCreditModal('${name}')" style="cursor:pointer">
                     <div class="liability-icon-wrap" style="background:${color}20;color:${color}">📈</div>
                     <div class="liability-info">
-                        <div class="liability-name">${name}</div>
-                        <div class="liability-meta">Límite: ${fmtMoney(limite)} · Usado: ${fmtMoney(deuda)} · ${util.toFixed(1)}%</div>
+                    <div class="liability-name">${name}</div>
+                    <div class="liability-meta" style="color:${change.color}">${change.label}</div>
+                    <div class="liability-meta">Límite ${fmtMoney(limite)} · Utilizado ${util === null ? '—' : util.toFixed(1) + '%'}${util > 100 ? ' · Sobre el límite' : ''}</div>
                         <div class="liability-progress-track">
-                            <div class="liability-progress-fill" style="width:${util}%;background:${color}"></div>
+                            <div class="liability-progress-fill" style="width:${Math.min(100, Math.max(0, util || 0))}%;background:${color}"></div>
                         </div>
                     </div>
                     <div class="liability-value">
                         <div class="liability-amount" style="color:${deuda > 0 ? '#f87171' : '#4ade80'}">${fmtMoney(deuda)}</div>
-                        <div class="liability-sub">${fmtMoney(disponible)} disp.</div>
+                        <div class="liability-sub">${disponible < 0 ? `Exceso ${fmtMoney(Math.abs(disponible))}` : `${fmtMoney(disponible)} disp.`}</div>
                     </div>
                 </div>
             `;
@@ -1379,21 +1436,18 @@ function loadDataJSONP() {
         `<div class="liability-list">${lineasHtml}</div>` : 
         '<div style="color:#64748b;padding:20px;text-align:center;">No hay líneas de crédito registradas.</div>';
 
-    const lineasDisp = lineas.reduce((sum, l) => sum + getDisponible(l.name, l.data), 0);
-    const lineasUtil = limiteLineas > 0 ? (deudaLineas / limiteLineas) * 100 : 0;
-    const lineasHeader = document.getElementById('lineasLimiteTotal');
-    if (lineasHeader) lineasHeader.textContent = fmtMoney(limiteLineas);
-
     // ─── Renderizar Préstamos ───
     const prestamosHtml = prestamos
         .sort((a, b) => getDeuda(b.data) - getDeuda(a.data))
         .map(({name, data}) => {
             const deuda = getDeuda(data);
+            const change = getLiabilityMonthChange(data);
             return `
                 <div class="liability-item" onclick="openCreditModal('${name}')" style="cursor:pointer">
                     <div class="liability-icon-wrap" style="background:#8b5cf620;color:#8b5cf6">🏦</div>
                     <div class="liability-info">
                         <div class="liability-name">${name}</div>
+                        <div class="liability-meta" style="color:${change.color}">${change.label}</div>
                         <div class="liability-meta">Préstamo personal · Saldo pendiente</div>
                     </div>
                     <div class="liability-value">
@@ -1405,6 +1459,101 @@ function loadDataJSONP() {
     document.getElementById('prestamosList').innerHTML = prestamosHtml ? 
         `<div class="liability-list">${prestamosHtml}</div>` : 
         '<div style="color:#64748b;padding:20px;text-align:center;">No hay préstamos registrados.</div>';
+
+    populateLiabilityTrendSelector();
+    renderLiabilityTrendChart();
+}
+
+function populateLiabilityTrendSelector() {
+    const select = document.getElementById('liabilityTrendSelect');
+    if (!select) return;
+    const names = [...TARJETAS_NOMBRES, ...LINEAS_NOMBRES, ...PRESTAMOS_NOMBRES];
+    const selected = select.value;
+    const currentHighest = names.slice().sort((a, b) =>
+        getDeuda(appData.creditos?.[b]) - getDeuda(appData.creditos?.[a])
+    )[0];
+    select.innerHTML = names.map(name => `<option value="${name}">${name}</option>`).join('');
+    select.value = names.includes(selected) ? selected : currentHighest;
+}
+
+function renderLiabilityTrendChart() {
+    const ctx = getCanvas('liabilityTrendChart');
+    if (!ctx) return;
+    if (charts.liabilityTrend) {
+        charts.liabilityTrend.destroy();
+        delete charts.liabilityTrend;
+    }
+
+    const select = document.getElementById('liabilityTrendSelect');
+    const creditName = select?.value;
+    if (!creditName) return;
+    const currentDate = new Date();
+    const currentYear = currentDate.getFullYear();
+    const currentMonth = currentDate.getMonth();
+    const monthKeys = Array.from({ length: 6 }, (_, offset) => {
+        const date = new Date(currentYear, currentMonth - (5 - offset), 1);
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    });
+    const credit = appData.creditos?.[creditName];
+    const monthlyValues = new Map((credit?.history || []).map(item => [
+        getExpenseMonthKey(item.isoDate || item.date), getDeuda({ current: Number(item.value) || 0 })
+    ]).filter(([monthKey]) => monthKey));
+    const observedValues = monthKeys.map(monthKey => monthlyValues.has(monthKey) ? monthlyValues.get(monthKey) : null);
+    const available = observedValues.filter(value => value !== null);
+    const average = available.length
+        ? available.reduce((sum, value) => sum + value, 0) / available.length
+        : null;
+    const summary = document.getElementById('liabilityTrendSummary');
+    if (summary) {
+        summary.textContent = average === null
+            ? `${creditName} · No hay saldos registrados en los últimos seis meses.`
+            : `${creditName} · Promedio de saldo: ${fmtMoney(average)} (${available.length} de 6 meses con datos).`;
+    }
+
+    charts.liabilityTrend = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: monthKeys.map(formatExpenseMonth),
+            datasets: [
+                {
+                    label: 'Saldo al cierre del mes',
+                    data: observedValues,
+                    borderColor: '#ef4444',
+                    backgroundColor: 'rgba(239,68,68,0.12)',
+                    fill: true,
+                    tension: 0.25,
+                    spanGaps: false,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
+                },
+                {
+                    label: 'Promedio de saldo (meses disponibles)',
+                    data: average === null ? monthKeys.map(() => null) : monthKeys.map(() => average),
+                    borderColor: '#f59e0b',
+                    borderDash: [6, 4],
+                    pointRadius: 0,
+                    fill: false
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { intersect: false, mode: 'index' },
+            plugins: {
+                legend: { position: 'top', align: 'end', labels: { color: '#94a3b8', usePointStyle: true } },
+                tooltip: {
+                    callbacks: {
+                        label: context => context.parsed.y === null ? null : `${context.dataset.label}: ${fmtMoney(context.parsed.y)}`
+                    }
+                }
+            },
+            scales: {
+                x: { grid: { display: false }, ticks: { color: '#64748b', maxRotation: 0 } },
+                y: { beginAtZero: true, grid: { color: 'rgba(51,65,85,0.2)' }, ticks: { color: '#64748b', callback: value => fmtMoney(value) } }
+            }
+        }
+    });
 }
 
     // === RENDER INCOME ===
@@ -1951,120 +2100,238 @@ function loadDataJSONP() {
 
 
     function renderAnalytics() {
-      const s = appData.summary;
-      const avgIncome = s.ingresosNetos.history.slice(-12).reduce((a, b) => a + b.value, 0) / 12;
-      const avgExpense = s.gastosTotal.history.slice(-12).reduce((a, b) => a + b.value, 0) / 12;
-      const avgSavings = avgIncome - avgExpense;
-      const avgSavingsRate = avgIncome > 0 ? (avgSavings / avgIncome) * 100 : 0;
-      
-      // Contribución: trabajo vs inversiones
-      const trabajoIncome = appData.ingresos['Trabajo']?.current || 0;
-      const otherIncome = avgIncome - trabajoIncome;
-      const workContribution = avgIncome > 0 ? (trabajoIncome / avgIncome) * 100 : 0;
-
-      // CAGR dinámico desde el primer dato histórico disponible
-      const patHist = s.patrimonioNeto.history;
-      let cagrDisplay = '—';
-      let cagrColor = '#f59e0b';
-      if (patHist.length >= 2) {
-          const firstVal = patHist[0].value;
-          const lastVal  = patHist[patHist.length - 1].value;
-          const years    = (patHist.length - 1) / 12;
-          if (firstVal > 0 && years > 0) {
-              const cagr = (Math.pow(lastVal / firstVal, 1 / years) - 1) * 100;
-              cagrDisplay = cagr.toFixed(1) + '%';
-              cagrColor   = cagr >= 10 ? '#4ade80' : '#f59e0b';
+      const sourceStatus = document.getElementById('analyticsSourceStatus');
+      if (!gastosData) {
+          if (sourceStatus) sourceStatus.textContent = 'Cargando históricos mensuales de DB_GASTOS…';
+          if (!analyticsDbGastosLoading) {
+              analyticsDbGastosLoading = true;
+              loadGastosData().then(() => {
+                  analyticsDbGastosLoading = false;
+                  renderAnalytics();
+                  if (document.getElementById('analytics')?.classList.contains('active')) {
+                      ['growthRate', 'invGrowthRate', 'incVsExp', 'projection'].forEach(key => {
+                          if (charts[key]) { charts[key].destroy(); delete charts[key]; }
+                      });
+                      renderChartsForTab('analytics');
+                  }
+              }).catch(error => {
+                  analyticsDbGastosLoading = false;
+                  if (sourceStatus) sourceStatus.textContent = 'No se pudo cargar DB_GASTOS; el análisis histórico no está disponible.';
+                  console.warn('No se pudo cargar el histórico para Análisis:', error);
+              });
           }
+      } else if (sourceStatus) {
+          sourceStatus.textContent = 'Flujos mensuales desde DB_GASTOS · patrimonio desde el balance.';
       }
-      const cagrSince = patHist.length > 0 ? patHist[0].date : 'inicio';
 
-      const html = `
+      const s = appData.summary;
+      const currentMonthKey = getExpenseMonthKey(new Date());
+      const closedMonths = (gastosData?.meses || []).map(month => ({
+          monthKey: getExpenseMonthKey(month.isoDate || month.mes),
+          totals: getDbGastosFinancialTotals(month),
+          month: month
+      })).filter(item => item.monthKey && item.monthKey < currentMonthKey &&
+          Number.isFinite(item.totals?.income) && Number.isFinite(item.totals?.expenses))
+        .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
+        .slice(-12);
+      const monthCount = closedMonths.length;
+      const incomeTotal = closedMonths.reduce((sum, item) => sum + item.totals.income, 0);
+      const expenseTotal = closedMonths.reduce((sum, item) => sum + item.totals.expenses, 0);
+      const averageIncome = monthCount ? incomeTotal / monthCount : null;
+      const averageSavings = monthCount ? (incomeTotal - expenseTotal) / monthCount : null;
+      const savingsRate = incomeTotal > 0 ? ((incomeTotal - expenseTotal) / incomeTotal) * 100 : null;
+      const workIncomeTotal = closedMonths.reduce((sum, item) => {
+          const values = item.month.valores || {};
+          const workKey = Object.keys(values).find(name => normalizeExpenseCategoryName(name) === normalizeExpenseCategoryName('Trabajo'));
+          return sum + (workKey ? (Number(values[workKey]) || 0) : 0);
+      }, 0);
+      const workContribution = incomeTotal > 0 ? (workIncomeTotal / incomeTotal) * 100 : null;
+      const otherIncome = incomeTotal - workIncomeTotal;
+
+      const patrimonyHistory = (s.patrimonioNeto.history || []).map(item => ({
+          monthKey: getExpenseMonthKey(item.isoDate || item.date),
+          date: item.isoDate || item.date,
+          value: Number(item.value)
+      })).filter(item => item.monthKey && Number.isFinite(item.value)).sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+      const positivePatrimony = patrimonyHistory.filter(item => item.value > 0);
+      const firstPatrimony = positivePatrimony[0];
+      const lastPatrimony = positivePatrimony[positivePatrimony.length - 1];
+      let cagr = null;
+      let elapsedMonths = 0;
+      if (firstPatrimony && lastPatrimony && firstPatrimony.monthKey !== lastPatrimony.monthKey) {
+          const firstDate = new Date(`${firstPatrimony.monthKey}-01T00:00:00`);
+          const lastDate = new Date(`${lastPatrimony.monthKey}-01T00:00:00`);
+          elapsedMonths = (lastDate.getFullYear() - firstDate.getFullYear()) * 12 + lastDate.getMonth() - firstDate.getMonth();
+          if (elapsedMonths >= 12) cagr = (Math.pow(lastPatrimony.value / firstPatrimony.value, 12 / elapsedMonths) - 1) * 100;
+      }
+      const cagrDisplay = cagr === null ? '—' : `${cagr.toFixed(1)}%`;
+      const cagrColor = cagr === null ? '#94a3b8' : cagr >= 10 ? '#4ade80' : cagr >= 0 ? '#f59e0b' : '#f87171';
+      const cagrSince = firstPatrimony ? formatExpenseMonth(firstPatrimony.monthKey) : '—';
+
+      document.getElementById('analyticsStats').innerHTML = `
           <div class="stat-card">
-              <div class="stat-header"><span class="stat-label">Ingreso Promedio (12m)</span></div>
-              <div class="stat-value">${fmtMoney(avgIncome)}</div>
-              <div class="stat-sub">Media móvil anual</div>
+              <div class="stat-header"><span class="stat-label">Ingreso mensual promedio</span></div>
+              <div class="stat-value">${fmtMoney(averageIncome)}</div>
+              <div class="stat-sub">${monthCount} meses cerrados · hasta 12</div>
           </div>
           <div class="stat-card">
-              <div class="stat-header"><span class="stat-label">Ahorro Promedio (12m)</span></div>
-              <div class="stat-value" style="color:${avgSavingsRate >= 10 ? '#4ade80' : avgSavingsRate > 0 ? '#f59e0b' : '#f87171'}">${fmtMoney(avgSavings)}</div>
-              <div class="stat-sub">${avgSavingsRate.toFixed(1)}% tasa de ahorro promedio</div>
+              <div class="stat-header"><span class="stat-label">Ahorro mensual promedio</span></div>
+              <div class="stat-value" style="color:${savingsRate === null ? '#94a3b8' : savingsRate >= 10 ? '#4ade80' : savingsRate > 0 ? '#f59e0b' : '#f87171'}">${fmtMoney(averageSavings)}</div>
+              <div class="stat-sub">Tasa del período: ${savingsRate === null ? '—' : savingsRate.toFixed(1) + '%'}</div>
           </div>
           <div class="stat-card">
-              <div class="stat-header"><span class="stat-label">Contribución Trabajo</span></div>
-              <div class="stat-value">${workContribution.toFixed(0)}%</div>
-              <div class="stat-sub">Ingresos pasivos: ${fmtMoney(otherIncome)}</div>
+              <div class="stat-header"><span class="stat-label">Ingresos de trabajo</span></div>
+              <div class="stat-value">${workContribution === null ? '—' : workContribution.toFixed(1) + '%'}</div>
+              <div class="stat-sub">Otras fuentes en ${monthCount} meses: ${fmtMoney(otherIncome)}</div>
           </div>
           <div class="stat-card">
-              <div class="stat-header"><span class="stat-label">CAGR Patrimonio</span></div>
+              <div class="stat-header"><span class="stat-label">CAGR del patrimonio</span></div>
               <div class="stat-value" style="color:${cagrColor}">${cagrDisplay}</div>
-              <div class="stat-sub">Desde ${cagrSince} (nominal)</div>
+              <div class="stat-sub">Desde ${cagrSince} · ${elapsedMonths >= 12 ? elapsedMonths + ' meses' : 'requiere al menos 12 meses'}</div>
           </div>
       `;
-      document.getElementById('analyticsStats').innerHTML = html;
   }
 
 
 
 // === RENDER RATIOS & KPIs ===
+const PASSIVE_INCOME_ROOT_NAMES = ['Intereses, dividendos', 'Inversiones'];
+
+function getDbGastosMonthData(monthKey) {
+    return (gastosData?.meses || []).find(month =>
+        getExpenseMonthKey(month.isoDate || month.mes) === monthKey
+    ) || null;
+}
+
+function getDbGastosFinancialTotals(monthData) {
+    if (!monthData) return null;
+    const incomeFallback = getDbGastosMonthlyCategoryValues(
+        getExpenseMonthKey(monthData.isoDate || monthData.mes), 'ingresos'
+    )?.total;
+    const expenseFallback = getDbGastosMonthlyCategoryValues(
+        getExpenseMonthKey(monthData.isoDate || monthData.mes), 'gastos'
+    )?.total;
+    const income = Number(monthData.totalIngreso);
+    const expenses = Number(monthData.totalGasto);
+    return {
+        income: Number.isFinite(income) ? income : (incomeFallback ?? null),
+        expenses: Number.isFinite(expenses) ? expenses : (expenseFallback ?? null)
+    };
+}
+
+function getPassiveIncomeForDbGastosMonth(monthData) {
+    if (!monthData?.valores) return null;
+    const categories = appData?.categorias || [];
+    const passiveRoots = categories.filter(category =>
+        String(category.tipo || '').trim().toLowerCase() === 'ingresos' &&
+        !category.padre &&
+        PASSIVE_INCOME_ROOT_NAMES.some(name =>
+            normalizeExpenseCategoryName(category.nombre) === normalizeExpenseCategoryName(name)
+        )
+    );
+    if (!passiveRoots.length) return null;
+
+    const monthlyValues = new Map(Object.entries(monthData.valores).map(([name, value]) => [
+        normalizeExpenseCategoryName(name), Number(value) || 0
+    ]));
+    const findValue = names => {
+        for (const name of names) {
+            const key = normalizeExpenseCategoryName(name);
+            if (monthlyValues.has(key)) return { found: true, value: monthlyValues.get(key) };
+        }
+        return { found: false, value: 0 };
+    };
+
+    let total = 0;
+    let foundAny = false;
+    passiveRoots.forEach(root => {
+        const rootValue = findValue([root.nombre, root.etiqueta]);
+        const children = categories.filter(category =>
+            String(category.tipo || '').trim().toLowerCase() === 'ingresos' &&
+            String(category.padre || '').trim() === String(root.id).trim()
+        );
+        const childValues = children.map(child => findValue([child.nombre]));
+        const childTotal = childValues.reduce((sum, item) => sum + item.value, 0);
+        const childrenFound = childValues.some(item => item.found);
+
+        // Inversiones is intentionally cumulative in this user's category
+        // model: include direct root transactions and its individual sources.
+        if (rootValue.found) total += rootValue.value;
+        if (childrenFound) total += childTotal;
+        if (rootValue.found || childrenFound) foundAny = true;
+    });
+    return foundAny ? total : null;
+}
+
 function calculateRatios() {
     const s = appData.summary;
-    const activos = s.activosTotales.current;
-    const pasivos = s.pasivosTotal.current;
-    const liquido = s.liquidoTotal.current;
-    const inversiones = s.inversionesTotal.current;
-    const patrimonio = s.patrimonioNeto.current;
-    const ingresos = s.ingresosNetos.current;
-    const otrosActivos = s.otrosActivos.current;
+    const activos = Number(s.activosTotales.current) || 0;
+    const pasivos = Number(s.pasivosTotal.current) || 0;
+    const liquido = Number(s.liquidoTotal.current) || 0;
+    const inversiones = Number(s.inversionesTotal.current) || 0;
+    const patrimonio = Number(s.patrimonioNeto.current) || 0;
+    const currentMonthKey = getExpenseMonthKey(new Date());
+    const currentDbMonth = getDbGastosMonthData(currentMonthKey);
+    const currentDbTotals = getDbGastosFinancialTotals(currentDbMonth);
+    const ingresos = currentDbTotals?.income ?? (Number(s.ingresosNetos.current) || 0);
+    const gastos = currentDbTotals?.expenses ?? (Number(s.gastosTotal.current) || 0);
 
     // Historial para cálculos de tendencia
-    const patHistory = s.patrimonioNeto.history;
+    const patHistory = s.patrimonioNeto.history || [];
     const last12 = patHistory.slice(-12);
 
-    // Current Ratio (activos líquidos / pasivos — excluye activos ilíquidos a largo plazo)
-    const currentRatio = pasivos > 0 ? liquido / pasivos : 0;
-
-    // Quick Ratio (activos rápidamente convertibles / pasivos)
-    const quickAssets = liquido + inversiones;
-    const quickRatio = pasivos > 0 ? quickAssets / pasivos : 0;
-
-    // Cash Ratio
-    const cashRatio = pasivos > 0 ? liquido / pasivos : 0;
-
-    // Working Capital
-    const workingCapital = liquido - pasivos;
+    // These are total-liability coverage measures. Current liabilities are not
+    // separated in the source data, so the app must not label them Current Ratio.
+    const cashCoverage = pasivos > 0 ? liquido / pasivos : null;
+    const liquidAssetsCoverage = pasivos > 0 ? (liquido + inversiones) / pasivos : null;
+    const netLiquidAssets = liquido + inversiones - pasivos;
+    const monthsCovered = gastos > 0 ? liquido / gastos : null;
 
     // Deuda/Patrimonio
-    const debtToEquity = patrimonio > 0 ? (pasivos / patrimonio) * 100 : 0;
+    const debtToEquity = patrimonio > 0 ? (pasivos / patrimonio) * 100 : null;
 
     // Deuda/Activos
-    const debtToAssets = activos > 0 ? (pasivos / activos) * 100 : 0;
+    const debtToAssets = activos > 0 ? (pasivos / activos) * 100 : null;
+    const revolvingCreditLimit = getCreditLimitTotal();
+    const creditUtilization = revolvingCreditLimit > 0
+        ? (getDeudaRotativa() / revolvingCreditLimit) * 100
+        : null;
 
-    // Cobertura de Deuda (Líquido / Pasivos como %)
-    const debtCoverage = pasivos > 0 ? (liquido / pasivos) * 100 : 0;
-
-    // ROA (Return on Assets) - ingresos anualizados / activos totales
-    // ingresos es mensual → multiplicar ×12 para comparar contra el stock de activos
-    const ingresosAnualizados = ingresos * 12;
-    const roa = activos > 0 ? (ingresosAnualizados / activos) * 100 : 0;
+    // Trailing-12-month net surplus divided by average assets, using only
+    // months present in all three histories (income, expenses, and assets).
+    const historyMap = series => new Map((series?.history || []).map(item => [
+        getExpenseMonthKey(item.isoDate || item.date), Number(item.value)
+    ]).filter(([month, value]) => month && Number.isFinite(value)));
+    const assetsByMonth = historyMap(s.activosTotales);
+    const dbMonthlyFinancials = new Map((gastosData?.meses || []).map(month => {
+        const monthKey = getExpenseMonthKey(month.isoDate || month.mes);
+        return [monthKey, getDbGastosFinancialTotals(month)];
+    }).filter(([month, values]) => month && values && values.income !== null && values.expenses !== null));
+    const completeMonths = [...dbMonthlyFinancials.keys()]
+        .filter(month => month < currentMonthKey && assetsByMonth.has(month))
+        .sort()
+        .slice(-12);
+    let roa = null;
+    if (completeMonths.length === 12) {
+        const netSurplus12m = completeMonths.reduce((sum, month) => {
+            const totals = dbMonthlyFinancials.get(month);
+            return sum + totals.income - totals.expenses;
+        }, 0);
+        const averageAssets12m = completeMonths.reduce((sum, month) => sum + assetsByMonth.get(month), 0) / 12;
+        if (averageAssets12m > 0) roa = (netSurplus12m / averageAssets12m) * 100;
+    }
 
     // Tasa de Crecimiento YoY (Patrimonio)
-    let yoyGrowth = 0;
+    let yoyGrowth = null;
     if (patHistory.length >= 13) {
-        const val12mAgo = patHistory[patHistory.length - 13].value;
-        if (val12mAgo !== 0) {
+        const val12mAgo = Number(patHistory[patHistory.length - 13].value);
+        if (Number.isFinite(val12mAgo) && val12mAgo !== 0) {
             yoyGrowth = ((patrimonio - val12mAgo) / Math.abs(val12mAgo)) * 100;
-        }
-    } else if (patHistory.length >= 2) {
-        const firstVal = patHistory[0].value;
-        const months = patHistory.length - 1;
-        if (firstVal > 0 && months > 0) {
-            const years = months / 12;
-            yoyGrowth = (Math.pow(patrimonio / firstVal, 1 / years) - 1) * 100;
         }
     }
 
     // Velocidad de Acumulación (promedio mensual últimos 12 meses)
-    let accumulationSpeed = 0;
+    let accumulationSpeed = null;
     if (last12.length >= 2) {
         const first = last12[0].value;
         const last = last12[last12.length - 1].value;
@@ -2073,44 +2340,45 @@ function calculateRatios() {
     }
 
     // Ratio de Ahorro
-    const savingsRate = ingresos > 0 ? ((ingresos - s.gastosTotal.current) / ingresos) * 100 : 0;
+    const savingsRate = ingresos > 0 ? ((ingresos - gastos) / ingresos) * 100 : null;
 
-    // Independencia Financiera = Ingresos Pasivos / Gastos
-    // Solo el ingreso pasivo (id '23' en presupuesto) refleja verdadera independencia
-    const presupuesto = appData.presupuesto || [];
-    const ingresoPasivo = presupuesto
-        .filter(p => p.tipo === 'Ingresos' && String(p.id).replace(/^P/i, '') === '23')
-        .reduce((a, b) => a + (b.gastoReal || 0), 0);
-    const fiRatio = s.gastosTotal.current > 0 ? (ingresoPasivo / s.gastosTotal.current) * 100 : 0;
+    // Independence uses actual historical values from DB_GASTOS, with its
+    // category names resolved through DB_CATEGORIAS rather than DB_PRESUPUESTO.
+    const ingresoPasivo = getPassiveIncomeForDbGastosMonth(currentDbMonth);
+    const fiRatio = currentDbMonth && ingresoPasivo !== null && gastos > 0
+        ? (ingresoPasivo / gastos) * 100
+        : null;
 
     return {
         liquidity: {
-            currentRatio: { value: currentRatio, label: 'Current Ratio', format: 'x', threshold: 2 },
-            quickRatio: { value: quickRatio, label: 'Quick Ratio', format: 'x', threshold: 1 },
-            cashRatio: { value: cashRatio, label: 'Cash Ratio', format: 'x', threshold: 0.5 },
-            workingCapital: { value: workingCapital, label: 'Working Capital', format: 'money', threshold: 0 }
+            cashCoverage: { value: cashCoverage, label: 'Efectivo / pasivos totales', description: 'Efectivo disponible dividido entre todos los pasivos.', format: 'x', threshold: 0.5 },
+            liquidAssetsCoverage: { value: liquidAssetsCoverage, label: 'Efectivo + inversiones / pasivos', description: 'Incluye inversiones además del efectivo; no es un Current Ratio.', format: 'x', threshold: 1 },
+            netLiquidAssets: { value: netLiquidAssets, label: 'Activos líquidos netos', description: 'Efectivo + inversiones − pasivos totales.', format: 'money', threshold: 0 },
+            monthsCovered: { value: monthsCovered, label: 'Meses de gastos cubiertos', description: 'Efectivo disponible ÷ gasto mensual actual.', format: 'x', threshold: 6 }
         },
         solvency: {
-            debtToEquity: { value: debtToEquity, label: 'Deuda / Patrimonio', format: 'pct', threshold: 50 },
-            debtToAssets: { value: debtToAssets, label: 'Deuda / Activos', format: 'pct', threshold: 50 },
-            debtCoverage: { value: debtCoverage, label: 'Cobertura de Deuda', format: 'pct', threshold: 100 },
-            monthsCovered: { value: s.gastosTotal.current > 0 ? liquido / s.gastosTotal.current : 0, label: 'Meses de gastos cubiertos', format: 'x', threshold: 6 }
+            debtToEquity: { value: debtToEquity, label: 'Deuda / Patrimonio', description: 'Pasivos totales como porcentaje del patrimonio neto.', format: 'pct', threshold: 50, lowerIsBetter: true },
+            debtToAssets: { value: debtToAssets, label: 'Deuda / Activos', description: 'Porción de los activos financiada con pasivos.', format: 'pct', threshold: 50, lowerIsBetter: true },
+            creditUtilization: { value: creditUtilization, label: 'Utilización de crédito', description: 'Deuda de tarjetas y líneas frente a sus límites.', format: 'pct', threshold: 30, lowerIsBetter: true }
         },
         profitability: {
-            roa: { value: roa, label: 'ROA (Return on Assets)', format: 'pct', threshold: 5 },
-            yoyGrowth: { value: yoyGrowth, label: 'Crecimiento YoY', format: 'pct', threshold: 10 },
-            accumulationSpeed: { value: accumulationSpeed, label: 'Vel. Acumulación', format: 'money', threshold: 0 },
-            savingsRate: { value: savingsRate, label: 'Tasa de Ahorro', format: 'pct', threshold: 10 },
-            fiRatio: { value: fiRatio, label: 'Independencia Financiera', format: 'pct', threshold: 100 }
+            roa: { value: roa, label: 'Excedente neto / activos promedio', description: 'DB_GASTOS: ingresos menos gastos de los últimos 12 meses cerrados ÷ activos promedio.', format: 'pct', threshold: 5 },
+            yoyGrowth: { value: yoyGrowth, label: 'Crecimiento YoY', description: 'Cambio del patrimonio frente a hace 12 meses.', format: 'pct', threshold: 10 },
+            accumulationSpeed: { value: accumulationSpeed, label: 'Velocidad de acumulación', description: 'Aumento promedio mensual del patrimonio en los últimos 12 registros.', format: 'money', threshold: 0 },
+            savingsRate: { value: savingsRate, label: 'Tasa de ahorro', description: '(Ingresos − gastos) ÷ ingresos del mes.', format: 'pct', threshold: 10 },
+            fiRatio: { value: fiRatio, label: 'Cobertura con ingresos pasivos', description: 'Intereses/dividendos + Inversiones y sus subcategorías ÷ gastos reales de DB_GASTOS.', format: 'pct', threshold: 100 }
         }
     };
 }
 
 function getKpiStatus(value, threshold, format, lowerIsBetter) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+        return { class: 'neutral', text: 'No disponible' };
+    }
+
     if (format === 'money') {
-        if (value >= threshold * 2) return { class: 'excellent', text: 'Excelente ✓' };
-        if (value >= threshold) return { class: 'good', text: 'Muy Bueno' };
-        if (value >= 0) return { class: 'neutral', text: 'Saludable' };
+        if (value > 0) return { class: 'good', text: 'Positivo' };
+        if (value === 0) return { class: 'neutral', text: 'En equilibrio' };
         return { class: 'warning', text: 'Atención' };
     }
 
@@ -2129,6 +2397,7 @@ function getKpiStatus(value, threshold, format, lowerIsBetter) {
 }
 
 function formatKpiValue(item) {
+    if (item.value === null || item.value === undefined || !Number.isFinite(Number(item.value))) return '—';
     if (item.format === 'money') return fmtMoney(item.value);
     if (item.format === 'pct') return item.value.toFixed(2) + '%';
     if (item.format === 'x') return item.value.toFixed(2) + 'x';
@@ -2138,18 +2407,19 @@ function formatKpiValue(item) {
 function renderKpiCard(item, lowerIsBetter) {
     const status = getKpiStatus(item.value, item.threshold, item.format, lowerIsBetter);
     const formatted = formatKpiValue(item);
+    const hasValue = item.value !== null && item.value !== undefined && Number.isFinite(Number(item.value));
 
     // Gauge width (0-100%)
     // Para "lower is better": invertir el fill para que menor deuda = barra más llena
     let gaugeWidth = 0;
-    if (lowerIsBetter) {
+    if (hasValue && lowerIsBetter) {
         const ref = item.format === 'pct' ? item.threshold * 2 : item.threshold * 3;
         gaugeWidth = Math.min(100, Math.max(0, (1 - item.value / ref) * 100));
-    } else if (item.format === 'pct') {
+    } else if (hasValue && item.format === 'pct') {
         gaugeWidth = Math.min(100, Math.max(0, (item.value / (item.threshold * 2)) * 100));
-    } else if (item.format === 'x') {
+    } else if (hasValue && item.format === 'x') {
         gaugeWidth = Math.min(100, Math.max(0, (item.value / (item.threshold * 3)) * 100));
-    } else if (item.format === 'money') {
+    } else if (hasValue && item.format === 'money') {
         const maxRef = Math.max(Math.abs(item.value), Math.abs(item.threshold) * 2);
         gaugeWidth = maxRef > 0 ? Math.min(100, (Math.abs(item.value) / maxRef) * 100) : 0;
     }
@@ -2166,7 +2436,8 @@ function renderKpiCard(item, lowerIsBetter) {
                 <span class="kpi-badge ${status.class}">${status.text}</span>
             </div>
             <div class="kpi-value">${formatted}</div>
-            <div class="kpi-sub">Meta: ${formatKpiValue({ ...item, value: item.threshold })}</div>
+            <div class="kpi-sub">${item.description || ''}</div>
+            <div class="kpi-sub">Referencia: ${formatKpiValue({ ...item, value: item.threshold })}</div>
             <div class="kpi-gauge">
                 <div class="kpi-gauge-track">
                     <div class="kpi-gauge-fill" style="width:${gaugeWidth}%;background:${gaugeColor}"></div>
@@ -2178,6 +2449,37 @@ function renderKpiCard(item, lowerIsBetter) {
 }
 
 function renderRatios() {
+    const sourceStatus = document.getElementById('ratiosSourceStatus');
+    if (!gastosData) {
+        if (sourceStatus) sourceStatus.textContent = 'Cargando el histórico mensual de DB_GASTOS…';
+        if (!ratiosDbGastosLoading) {
+            ratiosDbGastosLoading = true;
+            loadGastosData().then(() => {
+                ratiosDbGastosLoading = false;
+                if (sourceStatus) sourceStatus.textContent = 'Histórico mensual desde DB_GASTOS, relacionado con DB_CATEGORIAS.';
+                renderRatios();
+                if (document.getElementById('ratios')?.classList.contains('active')) {
+                    if (charts.ratiosRadar) {
+                        charts.ratiosRadar.destroy();
+                        charts.ratiosRadar = null;
+                    }
+                    renderRatiosRadarChart();
+                    renderRatiosTrendChart();
+                }
+            }).catch(error => {
+                ratiosDbGastosLoading = false;
+                if (sourceStatus) sourceStatus.textContent = 'No se pudo cargar DB_GASTOS; algunos indicadores aparecerán como no disponibles.';
+                const trendStatus = document.getElementById('ratiosTrendStatus');
+                const trendContainer = document.getElementById('ratiosTrendChart');
+                if (trendStatus) trendStatus.textContent = 'No se pudo cargar DB_GASTOS para el gráfico mensual.';
+                if (trendContainer) trendContainer.innerHTML = '<div class="modeco-empty-state">No se pudo cargar el historial mensual.</div>';
+                console.warn('No se pudo cargar el histórico para Ratios:', error);
+            });
+        }
+    } else if (sourceStatus) {
+        sourceStatus.textContent = 'Histórico mensual desde DB_GASTOS, relacionado con DB_CATEGORIAS.';
+    }
+
     const ratios = calculateRatios();
 
     // Liquidez
@@ -2188,7 +2490,7 @@ function renderRatios() {
 
     // Solvencia (lower is better para deuda)
     const solvencyHtml = Object.values(ratios.solvency)
-        .map(item => renderKpiCard(item, item.label.includes('Deuda')))
+        .map(item => renderKpiCard(item, item.lowerIsBetter))
         .join('');
     document.getElementById('solvencyRatios').innerHTML = solvencyHtml;
 
@@ -2197,6 +2499,192 @@ function renderRatios() {
         .map(item => renderKpiCard(item, false))
         .join('');
     document.getElementById('profitabilityRatios').innerHTML = profitabilityHtml;
+}
+
+function getRatioHistoryMap(series) {
+    return new Map((series?.history || []).map(item => [
+        getExpenseMonthKey(item.isoDate || item.date), Number(item.value)
+    ]).filter(([month, value]) => month && Number.isFinite(value)));
+}
+
+function shiftRatioMonthKey(monthKey, delta) {
+    const match = String(monthKey || '').match(/^(\d{4})-(\d{2})$/);
+    if (!match) return '';
+    const date = new Date(Number(match[1]), Number(match[2]) - 1 + delta, 1);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function getRatioTrendRows() {
+    if (!gastosData?.meses || !appData?.summary) return [];
+
+    const summary = appData.summary;
+    const assets = getRatioHistoryMap(summary.activosTotales);
+    const liabilities = getRatioHistoryMap(summary.pasivosTotal);
+    const liquid = getRatioHistoryMap(summary.liquidoTotal);
+    const investments = getRatioHistoryMap(summary.inversionesTotal);
+    const netWorth = getRatioHistoryMap(summary.patrimonioNeto);
+    const dbMonths = new Map();
+    gastosData.meses.forEach(month => {
+        const key = getExpenseMonthKey(month.isoDate || month.mes);
+        if (key) dbMonths.set(key, { month, totals: getDbGastosFinancialTotals(month) });
+    });
+    const monthKeys = [...new Set([
+        ...dbMonths.keys(), ...assets.keys(), ...liabilities.keys(), ...liquid.keys(),
+        ...investments.keys(), ...netWorth.keys()
+    ])].sort();
+    const dbKeys = [...dbMonths.keys()].sort();
+    const currentMonthKey = getExpenseMonthKey(new Date());
+
+    function trailingRoa(monthKey) {
+        if (monthKey >= currentMonthKey) return null;
+        const window = dbKeys.filter(key => key <= monthKey).slice(-12);
+        if (window.length !== 12 || window[11] !== monthKey) return null;
+        if (window.some(key => {
+            const totals = dbMonths.get(key)?.totals;
+            return !totals || !Number.isFinite(totals.income) || !Number.isFinite(totals.expenses);
+        })) return null;
+        for (let i = 1; i < window.length; i++) {
+            if (shiftRatioMonthKey(window[i - 1], 1) !== window[i]) return null;
+        }
+        if (window.some(key => !assets.has(key))) return null;
+        const averageAssets = window.reduce((sum, key) => sum + assets.get(key), 0) / window.length;
+        if (averageAssets <= 0) return null;
+        const surplus = window.reduce((sum, key) => {
+            const totals = dbMonths.get(key)?.totals;
+            return sum + (totals ? totals.income - totals.expenses : 0);
+        }, 0);
+        return (surplus / averageAssets) * 100;
+    }
+
+    return monthKeys.map(monthKey => {
+        const dbEntry = dbMonths.get(monthKey);
+        const totals = dbEntry?.totals;
+        const passive = dbEntry ? getPassiveIncomeForDbGastosMonth(dbEntry.month) : null;
+        const assetValue = assets.get(monthKey);
+        const liabilityValue = liabilities.get(monthKey);
+        const liquidValue = liquid.get(monthKey);
+        const investmentValue = investments.get(monthKey);
+        const netWorthValue = netWorth.get(monthKey);
+        const priorNetWorth = netWorth.get(shiftRatioMonthKey(monthKey, -12));
+
+        return {
+            monthKey,
+            values: {
+                savingsRate: totals?.income > 0 ? ((totals.income - totals.expenses) / totals.income) * 100 : null,
+                passiveIncomeCoverage: passive !== null && totals?.expenses > 0 ? (passive / totals.expenses) * 100 : null,
+                debtToAssets: assetValue > 0 && liabilities.has(monthKey) ? (liabilityValue / assetValue) * 100 : null,
+                debtToEquity: netWorthValue > 0 && liabilities.has(monthKey) ? (liabilityValue / netWorthValue) * 100 : null,
+                cashCoverage: liabilityValue > 0 && liabilities.has(monthKey) && liquid.has(monthKey) ? liquidValue / liabilityValue : null,
+                liquidAssetsCoverage: liabilityValue > 0 && liabilities.has(monthKey) && liquid.has(monthKey) && investments.has(monthKey)
+                    ? (liquidValue + investmentValue) / liabilityValue
+                    : null,
+                monthsCovered: totals?.expenses > 0 && liquid.has(monthKey) ? liquidValue / totals.expenses : null,
+                roa: trailingRoa(monthKey),
+                yoyGrowth: Number.isFinite(netWorthValue) && Number.isFinite(priorNetWorth) && priorNetWorth !== 0
+                    ? ((netWorthValue - priorNetWorth) / Math.abs(priorNetWorth)) * 100
+                    : null,
+                netLiquidAssets: liquid.has(monthKey) && investments.has(monthKey) && liabilities.has(monthKey)
+                    ? liquidValue + investmentValue - liabilityValue
+                    : null
+            }
+        };
+    });
+}
+
+function formatRatioTrendValue(value, format) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) return 'Sin datos';
+    if (format === 'pct') return `${Number(value).toFixed(1)}%`;
+    if (format === 'x') return `${Number(value).toFixed(2)}x`;
+    return fmtMoney(Number(value));
+}
+
+function renderRatiosTrendChart() {
+    if (charts.ratiosTrend) {
+        charts.ratiosTrend.destroy();
+        delete charts.ratiosTrend;
+    }
+    const container = document.getElementById('ratiosTrendChart');
+    const status = document.getElementById('ratiosTrendStatus');
+    const metricSelect = document.getElementById('ratiosTrendMetric');
+    const periodSelect = document.getElementById('ratiosTrendPeriod');
+    if (!container || !metricSelect || !periodSelect) return;
+    if (!gastosData) {
+        if (status) status.textContent = 'Cargando DB_GASTOS para construir el historial…';
+        container.innerHTML = '';
+        return;
+    }
+
+    const metrics = {
+        savingsRate: { label: 'Tasa de ahorro', format: 'pct', color: '#22c55e' },
+        passiveIncomeCoverage: { label: 'Cobertura con ingresos pasivos', format: 'pct', color: '#a78bfa' },
+        debtToAssets: { label: 'Deuda / activos', format: 'pct', color: '#f87171' },
+        debtToEquity: { label: 'Deuda / patrimonio', format: 'pct', color: '#fb923c' },
+        cashCoverage: { label: 'Efectivo / pasivos', format: 'x', color: '#38bdf8' },
+        liquidAssetsCoverage: { label: 'Efectivo + inversiones / pasivos', format: 'x', color: '#60a5fa' },
+        monthsCovered: { label: 'Meses de gastos cubiertos', format: 'x', color: '#34d399' },
+        roa: { label: 'Excedente neto / activos promedio (12m)', format: 'pct', color: '#fbbf24' },
+        yoyGrowth: { label: 'Crecimiento patrimonial YoY', format: 'pct', color: '#e879f9' },
+        netLiquidAssets: { label: 'Activos líquidos netos', format: 'money', color: '#facc15' }
+    };
+    const metric = metrics[metricSelect.value] || metrics.savingsRate;
+    const allRows = getRatioTrendRows();
+    const periodValue = periodSelect.value;
+    const rows = periodValue === 'all' ? allRows : allRows.slice(-Number(periodValue));
+    const hasData = rows.some(row => row.values[metricSelect.value] !== null && row.values[metricSelect.value] !== undefined);
+    if (!hasData) {
+        container.innerHTML = '<div class="modeco-empty-state">No hay datos suficientes para este ratio en el período seleccionado.</div>';
+        if (status) status.textContent = 'Los meses sin datos o sin base de cálculo se dejan vacíos.';
+        return;
+    }
+
+    if (status) status.textContent = `${rows.length} meses · los huecos indican que faltan datos para ese cálculo.`;
+    container.innerHTML = '';
+    const ctx = getCanvas('ratiosTrendChart');
+    if (!ctx) return;
+    charts.ratiosTrend = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: rows.map(row => formatExpenseMonth(row.monthKey)),
+            datasets: [{
+                label: metric.label,
+                data: rows.map(row => row.values[metricSelect.value]),
+                borderColor: metric.color,
+                backgroundColor: `${metric.color}22`,
+                fill: true,
+                tension: 0.25,
+                spanGaps: false,
+                pointRadius: 3,
+                pointHoverRadius: 6,
+                borderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { intersect: false, mode: 'index' },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: 'rgba(15,23,42,0.95)',
+                    titleColor: '#e2e8f0',
+                    bodyColor: '#e2e8f0',
+                    callbacks: {
+                        label: context => `${metric.label}: ${formatRatioTrendValue(context.parsed.y, metric.format)}`
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#64748b', maxRotation: 0, autoSkip: true },
+                    grid: { color: 'rgba(51,65,85,0.15)' }
+                },
+                y: {
+                    ticks: { color: '#64748b', callback: value => formatRatioTrendValue(value, metric.format) },
+                    grid: { color: 'rgba(51,65,85,0.2)' }
+                }
+            }
+        }
+    });
 }
 
 function renderRatiosRadarChart() {
@@ -2208,22 +2696,26 @@ function renderRatiosRadarChart() {
     if (!ctx) return;
 
     const r = calculateRatios();
-    const s = appData.summary;
 
     // Normalizar métricas a escala 0-100 para el radar
-    const norm = (val, max) => Math.min(100, Math.max(0, (val / max) * 100));
+    const norm = (val, max) => Number.isFinite(val)
+        ? Math.min(100, Math.max(0, (val / max) * 100))
+        : null;
+    const debtHealth = r.solvency.debtToAssets.value === null
+        ? null
+        : 100 - norm(r.solvency.debtToAssets.value, 100);
 
     const data = {
-        labels: ['Liquidez', 'Solvencia', 'Rentabilidad', 'Ahorro', 'Crecimiento', 'Cobertura'],
+        labels: ['Liquidez ampliada', 'Solvencia', 'Excedente neto', 'Ahorro', 'Crecimiento', 'Meses cubiertos'],
         datasets: [{
             label: 'Tus Métricas',
             data: [
-                norm(r.liquidity.currentRatio.value, 10),      // Current Ratio max 10x
-                norm(100 - r.solvency.debtToEquity.value, 100),  // Invertir: menor deuda = mejor
-                norm(r.profitability.roa.value, 20),             // ROA max 20%
-                norm(Math.max(0, r.profitability.savingsRate.value), 30), // Ahorro max 30%
-                norm(Math.max(0, r.profitability.yoyGrowth.value), 50),   // Crecimiento max 50%
-                norm(r.solvency.debtCoverage.value, 200)         // Cobertura max 200%
+                norm(r.liquidity.liquidAssetsCoverage.value, 2),
+                debtHealth,
+                norm(r.profitability.roa.value, 20),
+                norm(r.profitability.savingsRate.value === null ? null : Math.max(0, r.profitability.savingsRate.value), 30),
+                norm(r.profitability.yoyGrowth.value === null ? null : Math.max(0, r.profitability.yoyGrowth.value), 50),
+                norm(r.liquidity.monthsCovered.value, 12)
             ],
             borderColor: '#3b82f6',
             backgroundColor: 'rgba(59, 130, 246, 0.2)',
@@ -2315,7 +2807,10 @@ function renderRatiosRadarChart() {
         } else if (tab === 'ratios') {
             try { renderRatios(); } catch (e) { console.error(e); }
             setTimeout(() => {
-                try { if (!charts.ratiosRadar) renderRatiosRadarChart(); } 
+                try {
+                    if (!charts.ratiosRadar) renderRatiosRadarChart();
+                    if (!charts.ratiosTrend) renderRatiosTrendChart();
+                }
                 catch (e) { console.error(e); }
             }, 100);
         } else if (tab === 'db-gastos') {
@@ -3053,23 +3548,32 @@ function renderRatiosRadarChart() {
     const ctx = getCanvas('incomeVsExpenseChart');
     if (!ctx) return;
     //const inc = appData.summary.ingresosNetos.history;
-    const inc = appData.summary.ingresosNetos.history.map(d =>({
-      date: formatShortDate(d.date),
-      value: d.value
-    }))
-    //const exp = appData.summary.gastosTotal.history;
-    const exp = appData.summary.gastosTotal.history.map(d =>({
-      date: formatShortDate(d.date),
-      value: d.value
-    }))
+    let monthly = (gastosData?.meses || []).map(month => {
+      const monthKey = getExpenseMonthKey(month.isoDate || month.mes);
+      const totals = getDbGastosFinancialTotals(month);
+      return { monthKey, income: totals?.income, expenses: totals?.expenses };
+    }).filter(item => item.monthKey && Number.isFinite(item.income) && Number.isFinite(item.expenses))
+      .sort((a, b) => a.monthKey.localeCompare(b.monthKey)).slice(-24);
+    if (!monthly.length) {
+      const incomeByMonth = new Map((appData.summary.ingresosNetos.history || []).map(item => [
+        getExpenseMonthKey(item.isoDate || item.date), Number(item.value)
+      ]));
+      const expenseByMonth = new Map((appData.summary.gastosTotal.history || []).map(item => [
+        getExpenseMonthKey(item.isoDate || item.date), Number(item.value)
+      ]));
+      monthly = [...new Set([...incomeByMonth.keys(), ...expenseByMonth.keys()])].filter(Boolean)
+        .sort().map(monthKey => ({ monthKey, income: incomeByMonth.get(monthKey), expenses: expenseByMonth.get(monthKey) }))
+        .filter(item => Number.isFinite(item.income) || Number.isFinite(item.expenses)).slice(-24);
+    }
+    const labels = monthly.map(item => formatExpenseMonth(item.monthKey));
     charts.incVsExp = new Chart(ctx, {
         type: 'line',
         data: {
-        labels: inc.map(d => d.date + '\u200B'),
+        labels: labels,
         datasets: [
             {
             label: 'Ingresos',
-            data: inc.map(d => d.value),
+            data: monthly.map(d => d.income ?? null),
             borderColor: '#22c55e',
             backgroundColor: 'rgba(34,197,94,0.08)',
             fill: true,
@@ -3079,7 +3583,7 @@ function renderRatiosRadarChart() {
             },
             {
             label: 'Gastos',
-            data: exp.slice(0, inc.length).map(d => d.value),
+            data: monthly.map(d => d.expenses ?? null),
             borderColor: '#ef4444',
             backgroundColor: 'rgba(239,68,68,0.08)',
             fill: true,
@@ -3125,8 +3629,10 @@ function renderRatiosRadarChart() {
 
     const history = rawHistory.map(d => ({
         date: formatShortDate(d.date),
+        monthKey: getExpenseMonthKey(d.isoDate || d.date),
         value: Number(d.value) || 0
-    })).filter(d => d.value > 0); // Filtrar valores 0 o negativos para el CAGR
+    })).filter(d => d.value > 0 && d.monthKey)
+      .sort((a, b) => a.monthKey.localeCompare(b.monthKey));
 
     if (history.length < 2) {
         document.getElementById('projectionChart').innerHTML = 
@@ -3136,13 +3642,16 @@ function renderRatiosRadarChart() {
 
     const firstVal = history[0].value;
     const lastVal = history[history.length - 1].value;
-    const months = history.length;
+    const firstDateForSpan = new Date(`${history[0].monthKey}-01T00:00:00`);
+    const lastDateForSpan = new Date(`${history[history.length - 1].monthKey}-01T00:00:00`);
+    const months = (lastDateForSpan.getFullYear() - firstDateForSpan.getFullYear()) * 12 +
+        lastDateForSpan.getMonth() - firstDateForSpan.getMonth();
     
     // === CÁLCULO ROBUSTO DEL CAGR ===
     let cagr = 0;
     let useProjection = false;
     
-    if (firstVal > 0 && lastVal > 0 && months >= 2) {
+    if (firstVal > 0 && lastVal > 0 && months >= 12) {
         const years = months / 12;
         if (years > 0) {
             cagr = Math.pow(lastVal / firstVal, 1 / years) - 1;
@@ -3179,7 +3688,7 @@ function renderRatiosRadarChart() {
     // Tasa efectiva mensual (no nominal) para evitar desbordamiento
     const monthlyRate = useProjection ? Math.pow(1 + cagr, 1/12) - 1 : 0;
 
-    for (let i = 1; i <= 60; i++) {
+    for (let i = 1; i <= (useProjection ? 60 : 0); i++) {
         monthIdx++;
         if (monthIdx >= 12) { monthIdx = 0; year++; }
         
@@ -3192,6 +3701,11 @@ function renderRatiosRadarChart() {
             value: currentVal
         });
     }
+
+    const projectionStatus = document.getElementById('projectionStatus');
+    if (projectionStatus) projectionStatus.textContent = useProjection
+        ? `Escenario base a 5 años · CAGR calculado con ${months} meses reales`
+        : `Se necesitan al menos 12 meses entre el primer y último dato; hay ${Math.max(0, months)} meses.`;
 
     // === CONSTRUCCIÓN DE DATASETS PARA CHART.JS ===
     const allLabels = [...history.map(d => d.date), ...projected.map(d => d.date)];
@@ -3321,10 +3835,10 @@ function renderRatiosRadarChart() {
         // Limpiar contenedores
         const chartIds = [
             'patrimonioChart','assetsPieChart','assetsVsLiabilitiesChart',
-            'liquidoChart','inversionesChart','liabilitiesChart',
+            'liquidoChart','inversionesChart','liabilitiesChart','liabilityTrendChart',
             'incomeChart','expensesChart','expensesPieChart',
             'growthRateChart','invGrowthRateChart','incomeVsExpenseChart',
-            'projectionChart','ratiosRadarChart',
+            'projectionChart','ratiosRadarChart','ratiosTrendChart',
             'jarrasBarChart','jarrasMonthlyChart',
             'modecoIngresosChart','modecoGastosClasificacionChart',
             'modecoIngresosVsGastosChart','modecoWaterfallChart',
@@ -3409,6 +3923,8 @@ function renderRatiosRadarChart() {
 // ============================================================================
 
 let gastosData = null;
+let analyticsDbGastosLoading = false;
+let ratiosDbGastosLoading = false;
 let expenseDbGastosLoading = false;
 let incomeDbGastosLoading = false;
 let gastosDataLoadingPromise = null;

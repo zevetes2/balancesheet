@@ -704,6 +704,39 @@
     margin-bottom: 14px;
     padding: 0 4px;
 }
+.kpi-group-note {
+    margin: -4px 4px 12px;
+    color: #94a3b8;
+    font-size: 12px;
+    line-height: 1.5;
+}
+.ratios-trend-controls {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.ratios-trend-header {
+    flex-wrap: wrap;
+    gap: 12px;
+}
+.ratios-trend-controls label {
+    color: #94a3b8;
+    font-size: 11px;
+    font-weight: 600;
+}
+.ratios-trend-controls select {
+    max-width: 245px;
+}
+@media (max-width: 640px) {
+    .ratios-trend-controls {
+        width: 100%;
+    }
+    .ratios-trend-controls select {
+        flex: 1 1 100%;
+        max-width: none;
+    }
+}
 .kpi-group-icon {
     font-size: 18px;
     width: 32px;
